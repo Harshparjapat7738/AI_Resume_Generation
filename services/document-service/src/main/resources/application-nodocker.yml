@@ -1,0 +1,11 @@
+# ---------------------------------------------------------------------------
+# Profile: nodocker — LOCAL DEVELOPMENT ONLY.
+#
+# Object storage (MinIO/S3) is not running. Rendering and download are not
+# implemented until Milestone 6, so the service starts and reports health
+# normally; storage configuration is simply unused.
+# ---------------------------------------------------------------------------
+
+logging:
+  level:
+    ai.careerforge: DEBUG

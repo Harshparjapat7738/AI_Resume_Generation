@@ -1,0 +1,78 @@
+@import "tailwindcss";
+
+/* ---------------------------------------------------------------------------
+ * Design tokens — dark "forge" theme: near-black surfaces, one warm ember-to-
+ * rose accent used sparingly, a single cool mint reserved for positive/"grounded"
+ * signals (score bands, checkmarks). Tailwind v4 turns each --color-* below into
+ * matching bg-, text- and border- utilities automatically.
+ * ------------------------------------------------------------------------- */
+@theme {
+  --color-void: #08080b;
+  --color-surface: #100f13;
+  --color-surface-2: #18171d;
+  --color-border: #26252c;
+  --color-border-strong: #35333c;
+
+  --color-ink: #f5f4f7;
+  --color-ink-muted: #a5a3ae;
+  --color-ink-faint: #6d6b76;
+
+  --color-ember: #ff7a45;
+  --color-ember-soft: #ffb454;
+  --color-rose: #ff3d68;
+  --color-mint: #34d399;
+}
+
+html {
+  scroll-behavior: smooth;
+  color-scheme: dark;
+}
+
+html,
+body {
+  background-color: var(--color-void);
+  color: var(--color-ink);
+}
+
+/* Gradient text for headline emphasis — one accent pairing used consistently. */
+@utility text-gradient {
+  background-image: linear-gradient(90deg, var(--color-ember-soft), var(--color-rose));
+  background-clip: text;
+  -webkit-background-clip: text;
+  color: transparent;
+}
+
+/* Soft radial glow used behind the hero and the final CTA. */
+@utility bg-forge-glow {
+  background-image: radial-gradient(
+      640px circle at 20% 0%,
+      color-mix(in oklab, var(--color-ember) 16%, transparent),
+      transparent 60%
+    ),
+    radial-gradient(
+      520px circle at 85% 20%,
+      color-mix(in oklab, var(--color-rose) 12%, transparent),
+      transparent 55%
+    );
+}
+
+/* 1px hairline grid, faint, used behind the hero for texture without noise. */
+@utility bg-forge-grid {
+  background-image:
+    linear-gradient(color-mix(in oklab, var(--color-ink) 6%, transparent) 1px, transparent 1px),
+    linear-gradient(90deg, color-mix(in oklab, var(--color-ink) 6%, transparent) 1px, transparent 1px);
+  background-size: 44px 44px;
+  mask-image: radial-gradient(ellipse 70% 60% at 50% 0%, black 40%, transparent 90%);
+}
+
+/* Respect users who have asked the OS to reduce motion: GSAP timelines check this too. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

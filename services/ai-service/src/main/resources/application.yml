@@ -1,0 +1,86 @@
+server:
+  port: 8085
+  error:
+    include-stacktrace: never
+    include-message: never
+
+spring:
+  application:
+    name: ai-service
+  config:
+    import: ${CONFIG_IMPORT:optional:configserver:http://localhost:8888}
+  cloud:
+    config:
+      fail-fast: false
+  servlet:
+    multipart:
+      max-file-size: ${MAX_UPLOAD_SIZE:5MB}
+      max-request-size: ${MAX_UPLOAD_SIZE:5MB}
+
+eureka:
+  client:
+    service-url:
+      defaultZone: ${EUREKA_SERVER_URI:http://localhost:8761/eureka/}
+  instance:
+    prefer-ip-address: true
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus
+  endpoint:
+    health:
+      probes:
+        enabled: true
+      show-details: never
+  tracing:
+    sampling:
+      probability: ${TRACING_SAMPLE_RATE:1.0}
+
+springdoc:
+  api-docs:
+    path: /v3/api-docs
+  swagger-ui:
+    path: /swagger-ui.html
+
+logging:
+  pattern:
+    level: "%5p [${spring.application.name},%X{traceId:-},%X{spanId:-},%X{correlationId:-}]"
+
+# ---------------------------------------------------------------------------
+# Groq. The API key is supplied via GROQ_API_KEY and exists in this process only.
+# It is never logged, never returned to a client, and never reaches the frontend.
+# ---------------------------------------------------------------------------
+careerforge:
+  groq:
+    api-key: ${GROQ_API_KEY:}
+    base-url: ${GROQ_BASE_URL:https://api.groq.com/openai/v1}
+    model: ${GROQ_MODEL:llama-3.3-70b-versatile}
+    timeout-seconds: ${GROQ_TIMEOUT_SECONDS:60}
+    max-output-tokens: ${GROQ_MAX_OUTPUT_TOKENS:4096}
+    # Extraction and grounded rewriting, not creative writing: keep it near-deterministic.
+    temperature: ${GROQ_TEMPERATURE:0.2}
+    max-retries: ${GROQ_MAX_RETRIES:2}
+
+resilience4j:
+  circuitbreaker:
+    instances:
+      groq:
+        slidingWindowSize: 20
+        failureRateThreshold: 60
+        waitDurationInOpenState: 30s
+        permittedNumberOfCallsInHalfOpenState: 3
+  ratelimiter:
+    instances:
+      groq:
+        # Sized well below Groq's per-minute quota so the platform degrades gracefully
+        # instead of being throttled provider-side.
+        limitForPeriod: 30
+        limitRefreshPeriod: 60s
+        timeoutDuration: 5s
+
+# The request body can contain JD and profile text; never log it.
+logging:
+  level:
+    org.springframework.web.reactive.function.client: WARN

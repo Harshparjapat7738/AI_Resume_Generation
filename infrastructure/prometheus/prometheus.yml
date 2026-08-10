@@ -1,0 +1,21 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: careerforge-services
+    metrics_path: /actuator/prometheus
+    static_configs:
+      - targets:
+          - api-gateway:8080
+          - auth-service:8081
+          - profile-service:8082
+          - jd-service:8083
+          - resume-service:8084
+          - ai-service:8085
+          - assessment-service:8086
+          - document-service:8087
+          - application-service:8088
+          - notification-service:8089
+          - discovery-server:8761
+          - config-server:8888

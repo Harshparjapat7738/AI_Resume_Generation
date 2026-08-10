@@ -1,0 +1,63 @@
+server:
+  port: 8081
+  error:
+    include-stacktrace: never
+    include-message: never
+
+spring:
+  application:
+    name: auth-service
+  config:
+    import: ${CONFIG_IMPORT:optional:configserver:http://localhost:8888}
+  cloud:
+    config:
+      fail-fast: false
+  data:
+    mongodb:
+      uri: ${MONGODB_URI}
+      database: ${MONGODB_DB_AUTH}
+      auto-index-creation: false   # indexes are created explicitly at startup; see docs/DATABASE.md
+  servlet:
+    multipart:
+      max-file-size: ${MAX_UPLOAD_SIZE:5MB}
+      max-request-size: ${MAX_UPLOAD_SIZE:5MB}
+
+eureka:
+  client:
+    service-url:
+      defaultZone: ${EUREKA_SERVER_URI:http://localhost:8761/eureka/}
+  instance:
+    prefer-ip-address: true
+
+careerforge:
+  jwt:
+    # The signing secret lives here and in the gateway only (ADR-007) — nowhere else reads it.
+    secret: ${JWT_SECRET}
+  auth:
+    # false for local/dev (plain HTTP). Set true via env in docker/production, where the
+    # gateway and frontend are served over HTTPS.
+    refresh-cookie-secure: ${REFRESH_COOKIE_SECURE:false}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus
+  endpoint:
+    health:
+      probes:
+        enabled: true
+      show-details: never
+  tracing:
+    sampling:
+      probability: ${TRACING_SAMPLE_RATE:1.0}
+
+springdoc:
+  api-docs:
+    path: /v3/api-docs
+  swagger-ui:
+    path: /swagger-ui.html
+
+logging:
+  pattern:
+    level: "%5p [${spring.application.name},%X{traceId:-},%X{spanId:-},%X{correlationId:-}]"

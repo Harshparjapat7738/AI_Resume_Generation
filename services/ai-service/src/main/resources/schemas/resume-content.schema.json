@@ -1,0 +1,71 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Resume content output",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["summary", "experienceBullets"],
+  "$defs": {
+    "evidenceId": {
+      "type": "string",
+      "pattern": "^(EXP|PROJ|SKILL|CERT|EDU|ACH)-[0-9]{3,4}$"
+    },
+    "groundedText": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["text", "evidenceIds"],
+      "properties": {
+        "text": { "type": "string", "minLength": 1, "maxLength": 1000 },
+        "evidenceIds": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 20,
+          "items": { "$ref": "#/$defs/evidenceId" }
+        }
+      }
+    }
+  },
+  "properties": {
+    "summary": { "$ref": "#/$defs/groundedText" },
+    "experienceBullets": {
+      "type": "array",
+      "maxItems": 30,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["evidenceId", "bullets"],
+        "properties": {
+          "evidenceId": { "$ref": "#/$defs/evidenceId" },
+          "bullets": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 8,
+            "items": { "$ref": "#/$defs/groundedText" }
+          }
+        }
+      }
+    },
+    "projectDescriptions": {
+      "type": "array",
+      "maxItems": 20,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["evidenceId", "text", "evidenceIds"],
+        "properties": {
+          "evidenceId": { "$ref": "#/$defs/evidenceId" },
+          "text": { "type": "string", "minLength": 1, "maxLength": 1000 },
+          "evidenceIds": {
+            "type": "array",
+            "minItems": 1,
+            "items": { "$ref": "#/$defs/evidenceId" }
+          }
+        }
+      }
+    },
+    "skillsOrdering": {
+      "type": "array",
+      "maxItems": 100,
+      "items": { "$ref": "#/$defs/evidenceId" }
+    }
+  }
+}

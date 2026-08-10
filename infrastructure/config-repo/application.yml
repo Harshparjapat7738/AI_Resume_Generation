@@ -1,0 +1,42 @@
+# ---------------------------------------------------------------------------
+# Shared configuration served by config-server to EVERY service.
+# Service-specific overrides go in <service-name>.yml alongside this file.
+#
+# RULE: no secrets here. This directory is committed to Git. Reference secrets
+# with ${ENV_VAR} placeholders, which resolve in the consuming service's process.
+# ---------------------------------------------------------------------------
+
+careerforge:
+  jwt:
+    issuer: ${JWT_ISSUER:careerforge-ai}
+    access-expiration-seconds: ${JWT_ACCESS_EXPIRATION:900}
+    refresh-expiration-seconds: ${JWT_REFRESH_EXPIRATION:1209600}
+  storage:
+    bucket: ${S3_BUCKET:careerforge-documents}
+    presigned-url-ttl-seconds: ${S3_PRESIGNED_URL_TTL_SECONDS:300}
+  upload:
+    max-size-bytes: 5242880
+    allowed-mime-types:
+      - application/pdf
+      - application/vnd.openxmlformats-officedocument.wordprocessingml.document
+      - text/plain
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus
+  endpoint:
+    health:
+      show-details: never
+  metrics:
+    tags:
+      application: ${spring.application.name}
+
+logging:
+  level:
+    root: INFO
+    ai.careerforge: ${APP_LOG_LEVEL:INFO}
+    # Never raise these to DEBUG outside a local machine: they can echo tokens/queries.
+    org.springframework.security: WARN
+    org.springframework.data.mongodb.core.MongoTemplate: WARN

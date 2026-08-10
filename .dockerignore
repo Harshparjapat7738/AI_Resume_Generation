@@ -1,0 +1,10 @@
+.git
+.github
+docs
+frontend/node_modules
+frontend/dist
+**/target
+*.md
+.env
+.env.*
+!.env.example

@@ -1,0 +1,70 @@
+# ---------------------------------------------------------------------------
+# Profile: nodocker
+#
+# LOCAL DEVELOPMENT ONLY. Activated with SPRING_PROFILES_ACTIVE=nodocker so the
+# gateway runs with no infrastructure beyond MongoDB Atlas (which is cloud-hosted).
+#
+# What changes vs. the default profile:
+#   · Redis-backed rate limiting is removed, because Redis is not running.
+#   · The Redis health indicator is disabled so /actuator/health reports UP.
+#
+# Everything security-relevant is UNCHANGED: JWT verification, identity-header
+# stripping, CORS and the error envelope all behave exactly as in Docker.
+#
+# NEVER activate this profile in staging or production — it would remove the
+# rate limiting that protects login from credential stuffing and Groq from
+# cost abuse. Milestone 9 adds a startup guard that refuses to boot with this
+# profile when APP_ENV is not `local`.
+# ---------------------------------------------------------------------------
+
+spring:
+  cloud:
+    gateway:
+      # A profile-specific list REPLACES the default list rather than merging with
+      # it, so these routes are the complete set while `nodocker` is active.
+      routes:
+        - id: auth-service
+          uri: lb://auth-service
+          predicates:
+            - Path=/api/auth/**
+
+        - id: profile-service
+          uri: lb://profile-service
+          predicates:
+            - Path=/api/profile/**
+
+        - id: jd-service
+          uri: lb://jd-service
+          predicates:
+            - Path=/api/jd/**
+
+        - id: resume-service
+          uri: lb://resume-service
+          predicates:
+            - Path=/api/resumes/**
+
+        - id: assessment-service
+          uri: lb://assessment-service
+          predicates:
+            - Path=/api/assessment/**
+
+        - id: document-service
+          uri: lb://document-service
+          predicates:
+            - Path=/api/documents/**
+
+        - id: application-service
+          uri: lb://application-service
+          predicates:
+            - Path=/api/applications/**
+
+        # ai-service and notification-service remain unrouted (ADR-012).
+
+management:
+  health:
+    redis:
+      enabled: false
+
+logging:
+  level:
+    ai.careerforge: DEBUG

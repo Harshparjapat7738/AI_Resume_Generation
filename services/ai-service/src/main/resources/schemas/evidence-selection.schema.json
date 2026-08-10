@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Evidence selection output",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["matches"],
+  "properties": {
+    "matches": {
+      "type": "array",
+      "maxItems": 200,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["requirementId", "evidenceIds", "matchStrength"],
+        "properties": {
+          "requirementId": { "type": "string", "pattern": "^REQ-[0-9]{3,4}$" },
+          "evidenceIds": {
+            "type": "array",
+            "maxItems": 20,
+            "items": {
+              "type": "string",
+              "pattern": "^(EXP|PROJ|SKILL|CERT|EDU|ACH)-[0-9]{3,4}$"
+            }
+          },
+          "matchStrength": { "type": "string", "enum": ["STRONG", "PARTIAL", "NONE"] },
+          "reason": { "type": "string", "maxLength": 300 }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "JD analysis output",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["isJobPosting", "requirements", "keywords"],
+  "properties": {
+    "isJobPosting": { "type": "boolean" },
+    "notReason": { "type": ["string", "null"], "maxLength": 500 },
+    "jobTitle": { "type": ["string", "null"], "maxLength": 200 },
+    "company": { "type": ["string", "null"], "maxLength": 200 },
+    "location": { "type": ["string", "null"], "maxLength": 200 },
+    "employmentType": { "type": ["string", "null"], "maxLength": 60 },
+    "seniority": { "type": ["string", "null"], "maxLength": 60 },
+    "yearsOfExperienceMin": { "type": ["number", "null"], "minimum": 0, "maximum": 60 },
+    "yearsOfExperienceMax": { "type": ["number", "null"], "minimum": 0, "maximum": 60 },
+    "requirements": {
+      "type": "array",
+      "maxItems": 200,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["requirementId", "text", "type", "weight"],
+        "properties": {
+          "requirementId": { "type": "string", "pattern": "^REQ-[0-9]{3,4}$" },
+          "text": { "type": "string", "minLength": 1, "maxLength": 1000 },
+          "type": {
+            "type": "string",
+            "enum": ["HARD_REQUIRED", "PREFERRED", "RESPONSIBILITY", "SKILL",
+                     "TECHNOLOGY", "EDUCATION", "CERTIFICATION"]
+          },
+          "weight": { "type": "integer", "minimum": 1, "maximum": 5 },
+          "normalisedTerms": {
+            "type": "array",
+            "maxItems": 30,
+            "items": { "type": "string", "maxLength": 100 }
+          }
+        }
+      }
+    },
+    "keywords": {
+      "type": "array",
+      "maxItems": 150,
+      "items": { "type": "string", "maxLength": 100 }
+    }
+  }
+}

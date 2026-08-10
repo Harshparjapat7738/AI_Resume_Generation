@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(find /c/Users/Harsh -maxdepth 6 -iname \"mvn.cmd\" 2>/dev/null | head -5; find \"/c/Program Files\" -maxdepth 4 -iname \"mvn.cmd\" 2>/dev/null | head -5; find /c/ProgramData -maxdepth 4 -iname \"mvn.cmd\" 2>/dev/null | head -5)",
+      "Read(//c/Users/Harsh/**)",
+      "Read(//c/Program Files/**)",
+      "Read(//c/ProgramData/**)"
+    ]
+  }
+}
