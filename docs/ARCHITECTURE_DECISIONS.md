@@ -19,6 +19,14 @@ implementation reality required a choice the blueprint did not make.
 | [ADR-010](#adr-010) | Assessments are keyed by resume **version**, not resume ID | Accepted |
 | [ADR-011](#adr-011) | Config Server uses the `native` backend with a committed, secret-free config repo | Accepted |
 | [ADR-012](#adr-012) | ai-service and notification-service are not routed through the public gateway | Accepted |
+| [ADR-013](#adr-013) | Resume generation runs synchronously — no Redis Streams job queue yet | Accepted |
+| [ADR-014](#adr-014) | ATS scoring checks structured resume content, not a rendered document | Accepted |
+| [ADR-015](#adr-015) | JD URL extraction: SSRF guard + JSON-LD when present, generic text otherwise | Accepted |
+| [ADR-016](#adr-016) | Template system Phase 1: built-in catalogue only, upload/online deferred | Accepted |
+| [ADR-017](#adr-017) | The central `Application` aggregate references artifacts; generation lifecycle ≠ tracking lifecycle | Accepted |
+| [ADR-018](#adr-018) | document-service renders real Resume PDFs synchronously; download streams through the service rather than a presigned URL | Accepted |
+| [ADR-019](#adr-019) | Email generation: deterministic subject/frame + one grounded, model-written highlight paragraph | Accepted |
+| [ADR-020](#adr-020) | Cover-letter generation orchestrated from application-service, mirroring resume-service's two-stage pipeline | Accepted |
 
 ---
 
@@ -555,3 +563,738 @@ never approaches the client).
 Adding a user-facing AI feature requires a new gateway route plus a new ADR, forcing the
 security review rather than allowing it to happen by omission. Local debugging of these two
 services uses their container ports on the Docker network, not `localhost`.
+
+---
+
+<a id="adr-013"></a>
+# ADR-013
+
+## Decision
+
+`POST /api/resumes/generate` runs the full generation pipeline synchronously inside the HTTP
+request/response cycle and returns the finished `resume_versions` document directly, instead
+of the documented `202 Accepted` + job id, polled via
+`GET /api/resumes/generations/{jobId}`.
+
+## Problem
+
+The documented contract (`docs/API_CATALOG.md` §3, Milestone 5) assumes an async worker
+consuming a Redis Stream (ADR-005) to drive the evidence-selection → resume-content pipeline
+in the background. That worker does not exist yet — this milestone slice implements the
+first real, end-to-end vertical path (auth → profile → JD → resume) ahead of the async job
+infrastructure, to prove genuine integration rather than build a job queue no other service
+uses yet.
+
+## Options
+
+1. Build the Redis Streams worker now, ahead of everything else that would use it.
+2. Run generation synchronously for this slice; add the async worker when a second
+   long-running job type exists to justify the shared infrastructure.
+
+## Selected Option
+
+Option 2.
+
+## Reason
+
+The pipeline is two sequential Groq calls (evidence-selection, then resume-content, with at
+most one grounding-triggered retry) — single-digit seconds in the common case, tens of
+seconds worst case. That's within a normal HTTP timeout and doesn't yet justify a queue,
+a consumer, idempotency-key bookkeeping and job-status polling for a single caller.
+Building that infrastructure speculatively, before a second async workflow exists to share
+it, would be exactly the kind of premature generality the blueprint's aggregate design
+(docs/DATABASE.md §2) warns against.
+
+## Impact
+
+- `resume_generations.status` is written once, already in a terminal state
+  (`COMPLETED`/`FAILED`), rather than progressing through `QUEUED → SELECTING_EVIDENCE → …`.
+- There is no `GET /api/resumes/generations/{jobId}` endpoint yet — the frontend shows an
+  indeterminate "generating" state for the duration of the request instead of staged
+  progress, which is the honest representation of what the backend actually reports.
+- `POST /api/resumes/generate` returns `200` with the full result, not `202` with a job id.
+- Moving to the async contract later is additive: introduce the Redis Streams worker,
+  change this endpoint to enqueue and return `202`, and add the polling endpoint — no
+  existing field or persisted document shape needs to change.
+
+---
+
+<a id="adr-014"></a>
+# ADR-014
+
+## Decision
+
+`assessment-service`'s ATS engine scores the generated resume's **structured JSON content**
+(the same payload `resume-service` persists and returns), not a rendered PDF/DOCX. The
+seven checks it computes (contact info present, summary present, experience section
+present, date consistency, bullet length suitability, keyword presence, grounding
+integrity) replace the blueprint's ten document-formatting checks for now.
+
+## Problem
+
+`docs/DATABASE.md` §3 documents ten checks — `MACHINE_READABLE_TEXT`, `ATS_SAFE_LAYOUT`,
+`STANDARD_HEADINGS`, `CONTACT_PARSING`, `DATE_CONSISTENCY`, `NO_INFO_ONLY_IMAGES`,
+`STANDARD_FONTS`, `HEADER_FOOTER_SAFETY`, `FILENAME`, `LENGTH_SUITABILITY` — most of which
+only mean something against an actual rendered file (does the PDF use embedded fonts? does
+it have a header/footer that swallows content when parsed?). `document-service` doesn't
+exist yet (no PDF/DOCX rendering, ADR-013's scope), so there is no rendered artifact for
+any of those checks to inspect.
+
+## Options
+
+1. Build `document-service` (PDF rendering) first, so the ten checks can run against a real
+   file, before implementing any ATS scoring at all.
+2. Score what's actually available today — the structured content, the evidence behind it,
+   and the JD it was matched against — with a smaller, honestly-scoped check set, and revisit
+   once a rendered document exists.
+3. Compute all ten named checks now, hard-coding the document-formatting ones to a fixed
+   passing value.
+
+## Selected Option
+
+Option 2.
+
+## Reason
+
+Option 3 would be exactly the fabrication this product's own core principle forbids applied
+to itself — a "check" that always reports success without checking anything is not a check,
+it's a decoration. Option 1 blocks a working, honest ATS score behind an unrelated and much
+larger feature (document rendering). Option 2 ships a real, deterministic, explainable score
+today, scoped to what genuinely can be verified from data that exists: profile completeness,
+date sanity, bullet quality, JD keyword presence, and the grounding report `ai-service`
+already computed. `JdFitScoringEngine`'s compatibility formula
+(`0.50·coverage + 0.20·keyword + 0.20·seniority + 0.10·recency`) matches
+`docs/CODEBASE.md` §2 exactly — only the *ATS* checks are rescoped, not the JD-fit formula.
+
+## Impact
+
+- `AtsAssessment.engineVersion = "content-v1"` — when a document-rendering-based engine
+  ships, it becomes `"document-v1"` (or similar) so historical scores stay attributable to
+  the engine that produced them, per `docs/DATABASE.md` §3's own stated reason for
+  versioning the engine.
+- The seven checks, their weights (15/10/15/15/15/15/15 = 100) and detail strings are
+  implemented in `AtsScoringEngine` (assessment-service) — see
+  `docs/API_CATALOG.md` §2 for the exact response shape.
+- `jd_fit_assessments.jdVersionId` from the blueprint's unique-together key is dropped;
+  `resumeVersionId` alone is the unique key, since `resume-service` doesn't track a
+  `jdVersionId` today (ADR-013's scope) and a resume version is generated against exactly
+  one JD, so this is equivalent in practice.
+- `recommendations` is embedded on `JdFitAssessment` rather than its own collection — see
+  the class Javadoc; it's always read together with the fit score, which is exactly when
+  `docs/DATABASE.md` §2 says to embed.
+- Moving to Option 1 later doesn't invalidate this work: `AtsScoringEngine` becomes one
+  input into a combined score (or is replaced), and the JD-fit engine is untouched either
+  way.
+
+---
+
+<a id="adr-015"></a>
+# ADR-015
+
+## Decision
+
+`jd-service` fetches a job posting URL through a purpose-built SSRF guard
+(`SsrfGuard` + `JdUrlFetcher`), extracts it via schema.org `JobPosting` JSON-LD when the
+page provides it, and otherwise falls back to generic readable-text extraction
+(`JobPostingExtractor`) — the same two-tier honesty principle as ADR-014: structured fields
+are populated only when genuinely present, never guessed from unstructured HTML.
+
+## Problem
+
+The blueprint calls for JD intake by URL "from platforms such as LinkedIn, Indeed, Naukri,
+company career pages" with SSRF hardening. Two separate problems hide in that one sentence:
+
+1. **Security.** A URL supplied by an authenticated user is still executed by the backend on
+   the internal network. Without validation, it can be used to probe or reach services that
+   are never meant to be internet-reachable — including, notoriously, the
+   `169.254.169.254` cloud-metadata endpoint.
+2. **Honesty about coverage.** Named platforms (LinkedIn, Indeed) actively block automated
+   fetching; a scraper built to defeat that would be both fragile and outside what this
+   product should do. There is also no single HTML shape shared across "company career
+   pages" to scrape reliably.
+
+## Options
+
+1. Build named, site-specific scrapers for LinkedIn/Indeed/Naukri (CSS selectors per site).
+2. Fetch generically, with a real SSRF guard, and extract via whatever structured data the
+   page actually provides — schema.org `JobPosting` JSON-LD where present, readable text
+   otherwise. Make no per-site promises.
+3. Don't build URL intake at all; text paste remains the only intake path.
+
+## Selected Option
+
+Option 2.
+
+## Reason
+
+Option 1 requires reverse-engineering and continuously maintaining scrapers against sites
+that actively fight scraping (LinkedIn/Indeed rate-limit and block non-browser traffic; a
+scraper robust enough to reliably defeat that would be evading anti-bot measures, which this
+product should not do). It would also silently stop working the moment any target site
+changes its markup, with no way for the product to know. Option 3 leaves a real, requested
+capability unbuilt. Option 2 is honest by construction: JSON-LD `JobPosting` is a real,
+stable, machine-readable contract that a meaningful share of company career pages and ATS
+platforms (Greenhouse, Lever, Workday, and others) already publish — when it's there, the
+preview is genuinely structured; when it isn't, the user still gets the page's real text
+(exactly like a paste) rather than an error, and the AI analysis step (already built,
+ADR-none-needed — it's the existing pipeline) derives title/company/requirements from that
+text the same way it does for pasted JDs. Sites that block the fetch outright fail cleanly
+with "Unable to extract this job description from this URL" and a one-click path back to
+pasting — never a fabricated result.
+
+## Security design (`SsrfGuard`, `JdUrlFetcher`)
+
+- **Scheme** — `http`/`https` only.
+- **Port** — the scheme's default port only (`80`/`443`); no probing arbitrary ports.
+- **Address validation** — every DNS-resolved address is checked against loopback,
+  link-local (covers the `169.254.169.254` metadata endpoint), site-local/RFC1918 private
+  ranges, multicast, wildcard, carrier-grade NAT (`100.64.0.0/10`), `0.0.0.0/8`, and IPv6
+  unique-local (`fc00::/7`, which `InetAddress.isSiteLocalAddress()` does not cover).
+- **Redirects are never followed automatically** — `HttpClient.Redirect.NEVER`, then each
+  `Location` header is re-validated through the full guard before being followed (up to 5
+  hops). A public URL redirecting to a private one is exactly the pattern the guard exists
+  to stop; validating only the first URL would miss it entirely.
+- **Content-type allowlist** — only `text/html` responses are read; anything else (a JSON
+  API, a binary) is rejected before its body is parsed.
+- **Size cap** — 3&nbsp;MB, enforced while streaming, not after buffering the whole body.
+- **Timeouts** — 5s connect, 10s per request.
+- **Known, documented limitation:** DNS is resolved once, validated, then the connection is
+  made a moment later using the hostname again — a DNS-rebinding attacker who controls both
+  the DNS record and the timing could in theory swap the answer in between. Full mitigation
+  means pinning the connection to the exact validated address, which the JDK's `HttpClient`
+  doesn't expose simply. Accepted for now because the caller is an authenticated user
+  submitting a URL about their own job search, not an anonymous adversarial input — recorded
+  here rather than silently assumed away.
+
+## Impact
+
+- `job_descriptions` gains `sourceUrl`, `location`, `skillsSummary`, `experienceSummary` (all
+  nullable; see `docs/DATABASE.md` §3). Existing `TEXT`-sourced documents are unaffected —
+  the new fields simply don't apply to them.
+- `POST /api/jd/fetch-url` reuses the exact same confirm → analyse pipeline as text intake;
+  no new confirmation step or status was introduced (see `docs/API_CATALOG.md` §2).
+- No new supported-provider list is claimed anywhere in the product. Support is determined
+  by what a given page actually publishes, not by domain name.
+
+---
+
+<a id="adr-016"></a>
+# ADR-016
+
+## Decision
+
+Phase 1 of the template system implements only the **built-in template catalogue**: metadata
+in `resume-service` (`templates` collection, per ADR-004), a selection API
+(`GET /api/resumes/templates[/​{id}]`), and `templateId`/`templateVersion` persisted on
+`resume_generations` and `resume_versions`. Custom-upload and online templates are **not**
+built — the frontend shows both as an honest "Coming Soon" state, and the schema reserves
+`source` (`BUILT_IN` · `CUSTOM_UPLOAD` · `ONLINE`) and `ownerUserId` so neither requires a
+breaking change when they ship.
+
+## Problem
+
+`document-service` — the service ADR-004 assigns ownership of *renderable* template assets to
+— is an empty skeleton today (`DocumentApplication.java` only, no rendering code). Building
+upload would mean accepting a user-supplied template file that nothing can actually render;
+building "browse online templates" would mean either fabricating a catalogue or scraping
+third-party sites for content this product has no license to redistribute. Both would be
+exactly the kind of fabricated capability this codebase's other ADRs (008, 014, 015) have
+consistently refused to ship.
+
+## Options
+
+1. Build all three sources now, stubbing the parts that don't have a real backend yet.
+2. Build only the built-in catalogue; represent upload/online honestly as not-yet-available.
+3. Defer the entire template system until document-service exists.
+
+## Selected Option
+
+Option 2.
+
+## Reason
+
+Option 1 fails the same test ADR-014 already applied to ATS checks: a feature that appears to
+work but doesn't do the thing it claims is a fabrication, not a feature. Option 3 blocks a
+real, independently useful capability — the wizard can record and honor a template selection
+today, and every generated resume already carries a `templateId` ready for document-service to
+render against once it exists — behind unrelated, larger work. Option 2 ships exactly what has
+a genuine backend behind it.
+
+## Additional decisions folded into this ADR
+
+- **Default template.** `POST /api/resumes/generate` accepts an optional `templateId`;
+  omitting it resolves to `classic` (`TemplateService.DEFAULT_TEMPLATE_ID`) rather than
+  requiring every caller to select one, keeping the pre-existing generation contract backward
+  compatible.
+- **`previewKey`, not `thumbnailKey`.** `docs/DATABASE.md`'s original sketch named this field
+  `thumbnailKey`, implying a stored image asset. No thumbnail-rendering pipeline exists, so the
+  field is named `previewKey` and the frontend maps it to a real local component that renders
+  the template's actual structural definition (header style, column count, section-heading
+  treatment) — a genuine, if lightweight, preview of the real layout, never a stock image.
+- **All three built-in templates are single-column.** Multi-column resumes are a known ATS
+  parsing risk, and there is no renderer yet to verify any layout actually parses cleanly.
+  Claiming `atsSafe: true` for an unverified multi-column layout would be exactly the score
+  manipulation ADR-008 already prohibits, applied to a different field.
+- **Route.** The frontend step lives at `/generate/template/:jdId`, matching the existing
+  `:jdId`-scoped pattern of every other wizard step (`/generate/review/:jdId`,
+  `/generate/processing/:jdId`) rather than a bare `/generate/template` with no JD context.
+
+## Impact
+
+- `resume-service` gains `Template`/`TemplateRepository`/`TemplateService`/
+  `TemplateController`/`TemplateSeeder`; `ResumeGeneration` and `ResumeVersion` gain
+  `templateId`/`templateVersion`.
+- Selecting an unauthorized, disabled, or nonexistent template returns `404` before any AI
+  call is made — consistent with ADR-007's BOLA hardening (`ApiException.notOwned()`), and
+  cheaper than failing after spending a Groq request.
+- Moving to Option 1's full scope later is additive: `document-service` implements rendering
+  first (closing the gap this ADR identifies), then upload gets a real endpoint and online
+  gets a real provider integration — neither requires changing the `templates` schema or the
+  `templateId` already stamped on every existing resume version.
+
+---
+
+<a id="adr-017"></a>
+# ADR-017
+
+## Decision
+
+`application-service` implements the central `Application` aggregate the blueprint's diagram
+describes — user, job, generation type, template, resume, cover letter, email, ATS
+assessment, JD-fit assessment — as a **references-only** document, not a copy of any of it.
+`GenerationType` (`RESUME_ONLY` · `COVER_LETTER_ONLY` · `EMAIL_ONLY` · `ALL`) is a real,
+storable domain value today; only `RESUME_ONLY` can reach `ApplicationStatus.COMPLETED`,
+because resume-service is the only generation pipeline that exists (ADR-013). Application
+status (`DRAFT` → `PROCESSING` → `COMPLETED`/`FAILED`) is the **generation** lifecycle, kept
+deliberately separate from the job-search **tracking** lifecycle
+(applied/interviewing/offer/rejected/withdrawn) `docs/DATABASE.md`'s original `applications`
+sketch conflated into one `status` field.
+
+## Problem
+
+Two open questions blocked this milestone:
+
+1. **Does a central `Application` entity need to exist at all**, or is a resume-service
+   generation plus an assessment-service score already "the application"? The blueprint's
+   diagram (user → profile → job → JD → generation type → template → resume → cover letter →
+   email → ATS assessment → JD-fit assessment) names something none of the five implemented
+   services own: the *bundle*, not any one artifact in it. profile-service, jd-service,
+   resume-service and assessment-service each correctly own one artifact and nothing else
+   (`docs/DATABASE.md` §2's aggregate-boundary rule) — none of them is the right owner for
+   "this specific resume, generated against this specific JD, for this specific job, is one
+   application."
+2. **`docs/DATABASE.md`'s existing `applications` sketch** (`status`: `DRAFT` · `READY` ·
+   `APPLIED` · `INTERVIEWING` · `OFFER` · `REJECTED` · `WITHDRAWN`) describes a *tracking
+   board* for applications a user has already sent — a different, later feature from "did
+   generation for this application finish", which is what this milestone actually needs and
+   what the task's lifecycle (`DRAFT`/`PROCESSING`/`COMPLETED`/`FAILED`) describes.
+
+## Options
+
+For (1):
+
+1. Treat "the application" as implicit — a resume version plus its assessment, resolved by
+   the frontend joining `resume-service` and `assessment-service` responses at render time.
+2. Create the central `Application` aggregate in `application-service`, which already exists
+   as a wired-up skeleton (`docs/CODEBASE.md`, `docs/API_CATALOG.md` Milestone 8) reserved for
+   exactly this role, and have it reference the other services' artifacts by ID.
+3. Fold an `applications` collection into `resume-service` instead, since resume is the only
+   artifact that exists today.
+
+For (2):
+
+1. Overwrite the sketch's tracking `status` values with the generation-lifecycle ones this
+   milestone needs.
+2. Add a second field for the tracking status now, unused until a later milestone implements
+   it.
+3. Keep `status` as the generation lifecycle only; treat the tracking board as an explicitly
+   separate, later concern with its own field when it's actually built.
+
+## Selected Option
+
+Option 2 for both.
+
+## Reason
+
+For (1): Option 1 has no place to persist "this resume, cover letter and email are one
+application" — a page refresh loses the association, and nothing prevents a second dashboard
+feature from re-deriving it differently. Option 3 repeats the exact mistake ADR-002 already
+rejected for document-service: a service writing data that conceptually belongs to a
+different aggregate. Option 2 costs nothing extra — the service, its port, its gateway route
+(`/api/applications/**`) and its planned collection (`careerforge_application.applications`)
+were already reserved for this — and matches `docs/DATABASE.md` §2's embed-vs-reference rule
+exactly: an application *references* a resume, cover letter, email and two assessments
+because each is independently versioned and independently queried, never embeds them.
+
+For (1), assessment references specifically: assessment-service keys both the ATS and JD-fit
+assessment uniquely by `resumeVersionId + userId` (ADR-010) and exposes no separate assessment
+ID through its API. Inventing one on `Application` to satisfy "persist an assessment
+reference" literally would mean storing an ID nothing else recognises — exactly the kind of
+fabricated field ADR-008/014/015/016 have each refused to ship elsewhere in this codebase. The
+real, honest reference is `resumeVersionId` itself, which `Application` already stores; a
+boolean `assessed` records only whether one was found, set on a best-effort lookup the same
+way the frontend's own assessment call is already non-fatal (`ProcessingPage`).
+
+For (2): Option 1 would retroactively change the meaning of a value the blueprint's own
+diagram and this milestone's explicit instructions describe as the *generation* lifecycle,
+silently repurposing `READY`/`APPLIED`/etc. for something they were never designed to mean.
+Option 2 speculatively adds a field for a feature not yet designed — exactly the premature
+generality ADR-013 already declined elsewhere. Option 3 keeps today's model honest about what
+it actually tracks (has generation finished?) and leaves the tracking board as a clean
+additive change: a new `trackingStatus` field plus its own state machine, whenever a real
+"mark as applied / interviewing / offer" feature is built, changing no existing document.
+
+## Impact
+
+- New collections `careerforge_application.applications` and
+  `.application_status_history`, both documented in `docs/DATABASE.md` §3, with indexes
+  `userId+createdAt`, `userId+status`, and `applicationId+changedAt` (§4) — the exact indexes
+  already reserved there.
+- `POST /api/applications` verifies `jobDescriptionId` (jd-service), and, if supplied,
+  `resumeVersionId` (resume-service, and it must belong to the same `jobDescriptionId`) and
+  `templateId` (resume-service's template catalogue, ADR-016) before persisting — the same
+  `ApiException.notOwned()` 404 pattern every other service in this codebase already uses
+  (ADR-007). It never calls ai-service and never drives generation itself; it records the
+  outcome of a pipeline that already ran, matching the Milestone 8 API contract's own wording:
+  "save an application version with JD, resume, scores and template."
+  `PATCH /api/applications/{id}/status` enforces a small legal-transition table
+  (`DRAFT/FAILED → PROCESSING`, `PROCESSING → COMPLETED/FAILED`, `FAILED → DRAFT`) and appends
+  to `application_status_history`; `COMPLETED` is terminal.
+- `resume-service`'s and `assessment-service`'s domain models, generation pipeline (ADR-013)
+  and scoring engines (ADR-014) are untouched — `application-service` only calls their
+  existing read APIs (`GET /api/jd/{id}`, `GET /api/resumes/{id}`,
+  `GET /api/resumes/templates/{id}`, `GET /api/assessment/resume-versions/{resumeVersionId}`).
+  `/results/:resumeId` and the existing resume/ATS dashboard flow keep working unmodified and
+  unaware `application-service` exists.
+- Cover-letter, email and Gmail-draft generation endpoints documented for Milestone 8
+  (`.../cover-letter`, `.../email`, `.../gmail-draft`) remain unimplemented, as instructed;
+  `GenerationType` represents the values, nothing generates them yet.
+- The frontend is not wired to `application-service` in this milestone — `OutputTypePage`,
+  `ProcessingPage` and `/results/:resumeId` are unchanged. Wiring the wizard to call
+  `POST /api/applications` after a resume generation succeeds is additive follow-up work, not
+  required for the domain model to exist and be tested.
+
+---
+
+<a id="adr-018"></a>
+# ADR-018
+
+## Decision
+
+`document-service` renders real Resume PDFs — Thymeleaf HTML template → jsoup DOM
+normalisation → openhtmltopdf-pdfbox → PDF, stored in MinIO/S3 and persisted as
+`rendered_documents` (ADR-002) — running **synchronously** inside the HTTP request, the same
+deviation ADR-013 already established for resume generation. Download streams the PDF bytes
+through this service rather than issuing a presigned MinIO URL. Cover letters, DOCX and the
+async render-job contract the blueprint and `docs/API_CATALOG.md` §3 originally sketched
+remain unimplemented.
+
+## Problem
+
+ADR-016 left `document-service` an empty skeleton and named exactly what it needed to become
+real: "document-service implements rendering first (closing the gap this ADR identifies)".
+Two questions had to be answered to do that:
+
+1. **Synchronous or async?** The documented Milestone 6 contract is
+   `POST /api/documents/{resumeVersionId}/render` → `202` + a job to poll, matching the
+   blueprint's async job-queue design for every generation-shaped endpoint.
+2. **How does a browser get the bytes?** The same documented contract's download endpoint is
+   a 300-second presigned MinIO URL — the browser fetches the file directly from object
+   storage, not through this service.
+
+## Options
+
+For (1):
+
+1. Build the documented async contract now — a Redis Streams render job, polled via a new
+   endpoint.
+2. Render synchronously in the request handler, exactly like ADR-013's resume generation.
+
+For (2):
+
+1. Issue a presigned MinIO URL, as documented, and let the browser fetch it directly.
+2. Stream the PDF bytes through document-service's own authenticated endpoint.
+
+## Selected Option
+
+Option 2 for both.
+
+## Reason
+
+For (1): there is still no Redis Streams worker anywhere in this codebase (ADR-013, ADR-005)
+— building one solely for document rendering, while resume generation itself (the far more
+expensive, multi-Groq-call step immediately upstream of this one) remains synchronous, would
+add a queue in the wrong place first. Rendering an already-validated, already-grounded
+resume's structured content through a template is deterministic, local CPU work — no external
+API call, no unbounded latency — and reuses the exact deviation already accepted and tested
+for resume generation. Building the queue is real future work, not a gap specific to this
+service.
+
+For (2): the documented presigned-URL flow requires a MinIO/S3 endpoint the *browser* can
+reach directly, distinct from the internal Docker-network address (`http://minio:9000`)
+document-service itself uses to talk to it — a second, public storage endpoint to provision,
+secure and keep in sync with the internal one, purely so a URL can be handed to the browser.
+Streaming through document-service needs none of that: MinIO is never reached from outside
+the Docker network at all, no storage endpoint or credential is ever part of any response,
+and the download URL contains only an opaque Mongo id — the actual object key inside the
+bucket (a separate random UUID) never reaches the client. This satisfies "do not expose
+private storage credentials" and "do not expose unrestricted filesystem paths" more directly
+than the originally-sketched design, at the cost of proxying bytes through one extra hop,
+which is negligible for a resume-sized PDF.
+
+## Rendering pipeline detail
+
+Thymeleaf's default HTML5 output is not guaranteed to be strict XHTML, which
+openhtmltopdf's XML-based renderer requires. Rather than hand-write strict XHTML templates,
+the rendered HTML string is parsed by jsoup (tolerant of real-world HTML) and its DOM walked
+directly into a W3C `Document` (`W3CDom().fromJsoup(...)`), which openhtmltopdf consumes —
+templates stay ordinary, readable HTML+CSS. One concrete win this caught during testing:
+openhtmltopdf's CSS engine does not support the `:not()` pseudo-class — a
+`span:not(:last-child)::after` separator rule silently failed to apply (logged as a parser
+warning, not an error) in two of the three templates until replaced with an equivalent
+`span + span::before` adjacent-sibling rule, which is supported.
+
+## Impact
+
+- `document-service` gains `Template`-adjacent-but-distinct rendering code: it does **not**
+  duplicate resume-service's `templates` catalogue (ADR-004's split holds) — it only maps the
+  same three ids (`classic`, `modern-ats`, `professional`) to versioned HTML/CSS assets under
+  `document-service/src/main/resources/templates/<id>/<version>/resume.html`, and exposes no
+  catalogue endpoint of its own.
+- Rendering merges two kinds of data: ai-service's already-grounded content (summary,
+  experience bullets, project descriptions — verified against evidence at generation time,
+  ADR-013's pipeline) with factual profile data that was never AI-touched (name, contact,
+  dates, education, certifications, achievements) pulled directly from profile-service. Only
+  experiences/projects the AI actually selected for this JD are rendered — education,
+  certifications and achievements are shown in full, since they're the candidate's own
+  factual record, not tailored content.
+- Rendering defaults to whichever template a resume version was actually generated with
+  (`ResumeVersion.templateId`, ADR-016) rather than a document-service-local default; an
+  explicit `templateId` on the render call overrides it. A resume version that predates
+  template selection entirely falls back to `classic`, matching
+  `TemplateService.DEFAULT_TEMPLATE_ID`.
+- `rendered_documents` is unique on `(resumeVersionId, format)` — re-rendering (e.g. picking a
+  different template) replaces the row and its stored object rather than accumulating
+  history; identical content and template return the cached artifact.
+- `assessment-service`'s ATS scoring (ADR-014) is unchanged — it still scores structured
+  content, deliberately, not the rendered PDF this ADR adds. Nothing about this ADR requires
+  or implies revisiting that scope.
+- A resume version generated before this feature existed has no `rendered_documents` row;
+  `GET /api/documents/resume-versions/{id}` 404s for it, and the frontend shows "PDF
+  unavailable for this older generation" rather than an error — existing history keeps
+  working, it simply offers to render a PDF on demand rather than already having one.
+
+---
+
+<a id="adr-019"></a>
+# ADR-019
+
+## Decision
+
+`EMAIL_ONLY` generation is implemented as a **hybrid**: application-service deterministically
+assembles the subject line and the greeting/closing/sign-off frame of the email body from
+data already verified elsewhere (the application's denormalised job title/company, ADR-017;
+the candidate's own stated name, profile-service) — never generated by the model — and asks
+ai-service for exactly one thing: a short, grounded highlight paragraph connecting the
+candidate's real evidence to the role. ai-service's `EmailContentService` mirrors
+`CoverLetterContentService`'s pattern (schema validate → grounding validate → regenerate once
+→ drop-and-report), reusing `GroundingValidator`'s 3-arg `validate(statements, evidence,
+additionalContext)` overload unchanged so the job title and company may be named without a
+citation, exactly as cover-letter generation already established.
+
+## Problem
+
+An application email needs to state three things with total certainty — the job title, the
+company, and the candidate's own name — plus one thing that benefits from generation: a brief,
+genuine reason the candidate is a fit. Treating the whole email as free LLM output risks the
+model paraphrasing (or mis-stating) the job title/company it's given as context, exactly the
+class of failure ADR-014/015/016/018 have each independently refused to risk elsewhere in this
+codebase. Treating it as pure template text with no generation would satisfy "do not invent
+user information" trivially but wouldn't be a *generated* email at all — nothing would need
+evidence, an LLM, or grounding, and the feature would be indistinguishable from a form letter.
+
+## Options
+
+1. Generate the entire subject + body freely from the model, relying on grounding checks
+   alone to catch a misstated job title or company.
+2. Generate nothing; assemble the whole email deterministically from `Application` fields and
+   profile data (mail-merge style).
+3. Split responsibility: the model writes only the fact-dependent-but-genuinely-generative
+   part (one grounded highlight), everything else — subject, greeting, closing, sign-off,
+   signature — is assembled deterministically from data already known to be correct.
+
+## Selected Option
+
+Option 3.
+
+## Reason
+
+Option 1 makes the two facts most load-bearing for "is this even the right email" —
+job title and company — dependent on the model restating them correctly every time, with no
+deterministic fallback if it doesn't. Option 2 produces something too generic to satisfy
+"appropriate for a job application" in any meaningful sense and wastes the one place
+generation genuinely adds value: connecting the candidate's real background to this specific
+role in natural language. Option 3 costs nothing extra — `GroundingValidator`'s 3-arg overload
+and the schema/prompt/service/degrade-path structure already exist for cover-letter
+generation (`CoverLetterContentService`, this same codebase) — and gives the strongest
+guarantee available: the two facts that must never be wrong are never asked of the model at
+all, while the one paragraph that is model-written is checked exactly the way every other
+generated sentence in this product is checked.
+
+## Impact
+
+- `ai-service` gains `email-content.schema.json`, `prompts/email-content/v1.txt`,
+  `EmailContentService` and `POST /internal/ai/email-content` — structurally near-identical to
+  `CoverLetterContentService`, reduced to one body paragraph and one closing paragraph
+  (an email is shorter than a letter) and single-shot (no separate evidence-selection stage;
+  the model picks directly from the full evidence inventory, appropriate for one short
+  paragraph). `GroundingValidator` itself is unchanged.
+- `application-service` gains `EmailContent` (`careerforge_application.emails`, versioned and
+  immutable per generation, mirroring `resume_versions`), `EmailGenerationService`, and
+  `POST`/`GET /api/applications/{id}/email`. `Application.deriveStatus()` is generalised from
+  its `RESUME_ONLY`-only form to a per-type switch (`RESUME_ONLY` needs the resume,
+  `EMAIL_ONLY` needs the email, `COVER_LETTER_ONLY` needs the letter, `ALL` needs all three) —
+  behaviourally identical to the old logic for `RESUME_ONLY`, and `ALL` remains unreachable to
+  `COMPLETED` until every pipeline exists, per the earlier instruction not to implement it yet.
+- Email generation requires the application to already have a confirmed job title
+  (`Application.jobTitle() != null`) and the candidate to have at least one evidence item —
+  the same "add evidence first" guard `resume-service` already enforces, reported with the
+  same `VALIDATION_ERROR` shape.
+- A paragraph the grounding degrade path removes (both attempts failed) falls back to one
+  deterministic sentence built only from the application's own verified job title/company —
+  the email is never left with a visible gap, and the fallback never states anything beyond
+  what was already safe to state.
+- Calling `POST .../email` again regenerates: a new `EmailContent` version is persisted and
+  `Application.emailId` repoints at it, the same "call the generate endpoint again" pattern
+  `resume-service` already uses — no new endpoint shape needed for "Regenerate".
+- The frontend threads `?type=EMAIL_ONLY` through the existing wizard as a query param (the
+  same survives-a-reload technique `TemplatePage` already uses for `templateId`), skips the
+  resume-only template step, and lands on a new `/results/email/:applicationId` page. The
+  `RESUME_ONLY` path through `OutputTypePage`/`JobDescriptionPage`/`ReviewPage`/
+  `ProcessingPage` is unchanged in behaviour — every branch added defaults to it.
+- `COVER_LETTER_ONLY` and `ALL` remain out of this change's scope, as instructed, though
+  `EMAIL_ONLY`'s implementation now sits alongside cover-letter generation built the same
+  session (both reuse the same `GroundingValidator` overload and `Application` status
+  generalisation) rather than duplicating that infrastructure.
+
+---
+
+# ADR-020
+
+## Decision
+
+`COVER_LETTER_ONLY` generation is orchestrated from **application-service**, not
+resume-service, calling ai-service's new `CoverLetterContentService` via a two-stage pipeline
+(evidence selection, then content) that otherwise mirrors resume-service's own pipeline
+exactly (ADR-013). `GroundingValidator` gains a second, 3-arg `validate(statements, evidence,
+additionalContext)` overload so the confirmed job title and company may be named in the
+letter without needing an evidence citation for them specifically — everything else a
+statement asserts (employer, technology, metric, date) is still checked exactly as before.
+Email generation (ADR-019, built the same session) reuses this overload unchanged.
+
+## Problem
+
+A cover letter is not a résumé and not an email: it needs the JD's actual *requirements* (to
+write a letter that speaks to this specific role, not a generic one — unlike email's
+single-shot, no-evidence-selection shape), but it also has no template, no ATS score, and no
+document-service rendering of its own, so it does not obviously belong inside
+resume-service's pipeline. It also legitimately needs to name the company and role it's
+addressed to — content `GroundingValidator` would otherwise flag as an unsupported entity
+`Kubernetes`-style, exactly the failure this system is built to catch when the entity is
+*actually* invented, but wrong to catch when the entity is the real, user-confirmed target of
+the letter.
+
+## Options
+
+1. A new `cover-letter-service` deployable, duplicating resume-service's Feign clients,
+   evidence-selection call and persistence pattern for one endpoint.
+2. Extend resume-service to also generate cover letters, since it already owns the
+   evidence-selection-then-content pipeline shape and the relevant Feign clients.
+3. Orchestrate from application-service — add its own `ProfileServiceClient` and
+   `AiServiceClient` (evidence selection + cover-letter content), a new `CoverLetterVersion`
+   collection, and `CoverLetterGenerationService` structured like `EmailGenerationService`
+   (ADR-019): depends on `ApplicationService` for ownership and to record the resulting
+   reference, rather than the reverse.
+4. Widen `GroundingValidator` itself to special-case "the target job/company" as always
+   allowed, without a caller-supplied allowlist.
+
+## Selected Option
+
+Option 3, plus the `GroundingValidator` overload from Option 4's problem statement but shaped
+as an explicit parameter rather than a special case.
+
+## Reason
+
+Option 1 is a new service, a new Eureka registration, a new port, a new pom, a new Docker
+Compose entry and a new CI job for logic that fits in a few hundred lines — disproportionate
+for one generation type reusing infrastructure that mostly already exists. Option 2 makes
+resume-service responsible for an artifact it has nothing else to do with (no template, no
+document rendering, no ATS relationship) and risks exactly the kind of regression this task
+was explicitly told to avoid — touching the resume pipeline to add something unrelated to it.
+Option 3 costs one new domain type and one new service in application-service, which already
+owns the `Application` aggregate `coverLetterVersionId` was reserved on (ADR-017) and is
+where `docs/API_CATALOG.md`'s Milestone 8 contract already places
+`POST /api/applications/{id}/cover-letter` — the public endpoint's home was decided before
+this ADR, only its implementation was pending.
+
+For the grounding question: a bare special case (Option 4) would hide "the model may name
+the company without evidence" inside `GroundingValidator` itself, invisible to a caller that
+didn't know to look — a resume-content call could silently start accepting arbitrary company
+names if the profile happened to contain a company-shaped word. An explicit
+`additionalContext` parameter keeps the exception visible at the call site: only cover-letter
+(and now email) generation supplies it, and only with the two specific, already-verified
+strings (job title, company) that justify it. Every other rule — numbers, dates, employers,
+technologies, contact details — is completely unaffected; a regression test
+(`GroundingValidatorTest$AdditionalContext`) asserts the allowlist widens proper-noun
+matching only, not the numeric-claim check.
+
+## Impact
+
+- `ai-service` gains `cover-letter.schema.json`, `prompts/cover-letter/v1.txt`,
+  `CoverLetterContentService` and `POST /internal/ai/cover-letter`. Output is `greeting`
+  (plain string, never grounding-checked — boilerplate, not a factual claim),
+  `openingParagraph`/`bodyParagraphs[]`/`closingParagraph` (each `{ text, evidenceIds }`,
+  grounding-checked exactly like resume bullets), and `signOff` (plain string). A paragraph
+  that fails grounding twice is dropped entirely (mirrors `ResumeContentService`'s summary
+  removal) rather than shown unverified; the response reports which locations were removed.
+- `GroundingValidator.validate` gains the 3-arg overload described above; the 2-arg form now
+  delegates to it with an empty set, so every existing caller and test is unaffected. Writing
+  the regression test for this overload also surfaced and fixed a real, pre-existing bug in
+  `supportsNumber`: it stripped all non-digit characters from the *entire* cited-evidence blob
+  before substring-matching a claimed number, so two unrelated numbers sitting near each other
+  in the evidence (a metric, then a date a few words later) could concatenate into a substring
+  that coincidentally matched a fabricated one — a real evidence fixture with `"...300ms
+  2021-03 2024-01"` let a fabricated `"40%"` through undetected, because `"2024-01"` digit-
+  stripped to `"...2401"`, which contains `"40"`. Fixed to compare per whitespace-delimited
+  token instead of across the whole blob — `GroundingValidatorTest$Rejects.inventedMetric`
+  now genuinely rejects it.
+- `application-service` gains `ProfileServiceClient` (`GET /api/profile/evidence`),
+  extends `JdServiceClient` with `GET /api/jd/{id}/analysis`, extends `AiServiceClient` with
+  the evidence-selection and cover-letter calls, gains `CoverLetterVersion`
+  (`careerforge_application.cover_letter_versions`, versioned and immutable per generation,
+  mirroring `resume_versions`/`EmailContent`), `CoverLetterGenerationService`, and
+  `POST`/`GET /api/applications/{id}/cover-letter`. `Application.attachCoverLetter(...)` sets
+  the reference and recomputes status via the same per-type `deriveStatus()` switch ADR-019
+  generalised — no further change needed there.
+- Cover-letter generation requires the job description to be confirmed and analysed (reuses
+  `JD_NOT_CONFIRMED` — the same conflict resume-service already surfaces) and the candidate to
+  have at least one evidence item, the same guard resume-service and email generation both
+  enforce.
+- Calling `POST .../cover-letter` again regenerates: a new `CoverLetterVersion` is persisted
+  and `Application.coverLetterVersionId` repoints at it — the same "call the generate endpoint
+  again" pattern resume-service and email generation both use.
+- **Unrelated fix discovered along the way:** `application-service`'s
+  `spring-boot-starter-oauth2-client` dependency (added for a future Gmail-draft OAuth flow)
+  transitively pulls in Spring Security's autoconfiguration, which — absent an explicit
+  `SecurityFilterChain` bean — defaults every endpoint to requiring a generated-password HTTP
+  Basic login. This silently 401'd every application-service endpoint, including the
+  already-implemented `POST /api/applications` from ADR-017, once the dependency was added.
+  Fixed with a `SecurityConfig` identical to auth-service's own (permit-all, stateless, no
+  CSRF/basic/form-login — identity is the gateway-forwarded `X-User-Id` header, trusted the
+  same way every other internal service trusts it).
+- The frontend threads `?type=COVER_LETTER_ONLY` through the existing wizard exactly the way
+  `?type=EMAIL_ONLY` already does (survives-a-reload query param, skips the template step),
+  and lands on a new `/results/cover-letter/:applicationId` page. `RESUME_ONLY` and
+  `EMAIL_ONLY` are unchanged.
+- Out of scope, per the task: `EMAIL_ONLY`/`ALL` combined generation (`GenerationType.ALL`),
+  templates, PDF/DOCX rendering, and any change to the resume pipeline.

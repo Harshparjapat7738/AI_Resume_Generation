@@ -1,7 +1,11 @@
+import { Link } from 'react-router-dom';
 import { Reveal } from '../components/Reveal';
 import { ArrowRightIcon } from '../components/icons';
+import { useSession } from '@/services/session';
 
 export function FinalCta() {
+  const { data: user } = useSession();
+
   return (
     <section className="relative overflow-hidden border-t border-border bg-void py-24">
       <div className="absolute inset-0 bg-forge-glow" aria-hidden="true" />
@@ -18,17 +22,17 @@ export function FinalCta() {
 
         <Reveal delay={0.1}>
           <div className="mt-9 flex flex-col items-center gap-3 sm:flex-row sm:justify-center">
-            <a
-              href="#top"
+            <Link
+              to="/generate"
               className="group inline-flex items-center justify-center gap-2 rounded-full bg-linear-to-r from-ember-soft to-rose px-6 py-3 text-sm font-semibold text-void transition-transform hover:-translate-y-0.5"
             >
-              Back to the top
-              <ArrowRightIcon className="h-4 w-4 -rotate-90 transition-transform group-hover:-translate-y-0.5" />
-            </a>
+              {user ? 'Generate a resume' : 'Get started'}
+              <ArrowRightIcon className="h-4 w-4 transition-transform group-hover:translate-x-0.5" />
+            </Link>
           </div>
           <p className="mt-5 text-xs text-ink-faint">
-            Milestone 1 of 9 — the platform foundation is live. Profile, JD and generation
-            screens ship in upcoming milestones.
+            Live today: profile evidence, JD analysis and grounded generation. ATS scoring,
+            document export and cover letters are on the way.
           </p>
         </Reveal>
       </div>

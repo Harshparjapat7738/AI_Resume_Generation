@@ -47,7 +47,7 @@ export function SiteFooter() {
 
         <div className="mt-12 flex flex-col gap-3 border-t border-border pt-6 text-xs text-ink-faint sm:flex-row sm:items-center sm:justify-between">
           <p>&copy; {new Date().getFullYear()} CareerForge AI. Proprietary. All rights reserved.</p>
-          <p>Milestone 1 of 9 — platform foundation live, product screens shipping next.</p>
+          <p>Profile, JD analysis and grounded generation are live. ATS scoring and documents are next.</p>
         </div>
       </div>
     </footer>

@@ -1,5 +1,6 @@
 package ai.careerforge.ai.schema;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.networknt.schema.JsonSchema;
@@ -52,7 +53,7 @@ public class SchemaValidator {
         JsonNode node;
         try {
             node = objectMapper.readTree(stripCodeFence(rawJson));
-        } catch (IOException ex) {
+        } catch (JsonProcessingException ex) {
             // The body may contain JD or profile text — log the reason, never the content.
             log.warn("Model output was not valid JSON schema={} reason={}",
                     schemaName, ex.getOriginalMessage());

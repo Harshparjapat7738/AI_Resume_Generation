@@ -6,6 +6,8 @@ import ai.careerforge.ai.client.GroqClient;
 import ai.careerforge.ai.client.GroqException;
 import ai.careerforge.ai.config.GroqProperties;
 import ai.careerforge.ai.prompt.PromptRegistry;
+import ai.careerforge.ai.service.CoverLetterContentService;
+import ai.careerforge.ai.service.EmailContentService;
 import ai.careerforge.ai.service.EvidenceSelectionService;
 import ai.careerforge.ai.service.JdAnalysisService;
 import ai.careerforge.ai.service.ResumeContentService;
@@ -38,6 +40,8 @@ public class AiController {
     private final JdAnalysisService jdAnalysisService;
     private final EvidenceSelectionService evidenceSelectionService;
     private final ResumeContentService resumeContentService;
+    private final CoverLetterContentService coverLetterContentService;
+    private final EmailContentService emailContentService;
     private final GroqClient groqClient;
     private final GroqProperties groqProperties;
     private final PromptRegistry promptRegistry;
@@ -45,12 +49,16 @@ public class AiController {
     public AiController(JdAnalysisService jdAnalysisService,
                         EvidenceSelectionService evidenceSelectionService,
                         ResumeContentService resumeContentService,
+                        CoverLetterContentService coverLetterContentService,
+                        EmailContentService emailContentService,
                         GroqClient groqClient,
                         GroqProperties groqProperties,
                         PromptRegistry promptRegistry) {
         this.jdAnalysisService = jdAnalysisService;
         this.evidenceSelectionService = evidenceSelectionService;
         this.resumeContentService = resumeContentService;
+        this.coverLetterContentService = coverLetterContentService;
+        this.emailContentService = emailContentService;
         this.groqClient = groqClient;
         this.groqProperties = groqProperties;
         this.promptRegistry = promptRegistry;
@@ -75,6 +83,21 @@ public class AiController {
     public ResponseEntity<AiResponses.ResumeContentResponse> generateResumeContent(
             @Valid @RequestBody AiRequests.ResumeContentRequest request) {
         return ResponseEntity.ok(call(() -> resumeContentService.generate(request)));
+    }
+
+    /** Grounded cover-letter content, using the evidence ids selected in the previous stage. */
+    @PostMapping("/cover-letter")
+    public ResponseEntity<AiResponses.CoverLetterContentResponse> generateCoverLetter(
+            @Valid @RequestBody AiRequests.CoverLetterContentRequest request) {
+        return ResponseEntity.ok(call(() -> coverLetterContentService.generate(request)));
+    }
+
+    /** Grounded application-email content — single-shot, picks directly from the full
+     *  evidence inventory (see ARCHITECTURE_DECISIONS.md ADR-019). */
+    @PostMapping("/email-content")
+    public ResponseEntity<AiResponses.EmailContentResponse> generateEmailContent(
+            @Valid @RequestBody AiRequests.EmailContentRequest request) {
+        return ResponseEntity.ok(call(() -> emailContentService.generate(request)));
     }
 
     /**

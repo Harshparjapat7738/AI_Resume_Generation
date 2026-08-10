@@ -24,6 +24,12 @@ public class ResumeGeneration {
     @Field("jobDescriptionId")
     private String jobDescriptionId;
 
+    @Field("templateId")
+    private String templateId;
+
+    @Field("templateVersion")
+    private String templateVersion;
+
     @Field("status")
     private ResumeGenerationStatus status;
 
@@ -41,9 +47,11 @@ public class ResumeGeneration {
         // Spring Data
     }
 
-    public ResumeGeneration(String userId, String jobDescriptionId) {
+    public ResumeGeneration(String userId, String jobDescriptionId, String templateId, String templateVersion) {
         this.userId = userId;
         this.jobDescriptionId = jobDescriptionId;
+        this.templateId = templateId;
+        this.templateVersion = templateVersion;
         this.status = ResumeGenerationStatus.GENERATING;
     }
 
@@ -57,6 +65,14 @@ public class ResumeGeneration {
 
     public String jobDescriptionId() {
         return jobDescriptionId;
+    }
+
+    public String templateId() {
+        return templateId;
+    }
+
+    public String templateVersion() {
+        return templateVersion;
     }
 
     public void complete() {

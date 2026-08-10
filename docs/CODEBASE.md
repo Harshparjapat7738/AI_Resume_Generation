@@ -3,11 +3,21 @@
 What is actually implemented, where it lives, and how a request moves through it.
 Updated whenever architecture or a major flow changes.
 
-**Current state:** Milestone 1 — foundation, plus `ai-service` brought forward and fully
-implemented (Groq client, prompt registry, schema validation, grounding validation). The
-other eight business services are wired-up skeletons: they build, register with Eureka,
-load config and expose health, but contain no domain logic yet. Sections below marked
-*(skeleton — Mn)* describe the agreed design for a later milestone.
+**Current state:** a first vertical slice is implemented ahead of the milestone plan —
+`ai-service` (Groq client, prompt registry, schema validation, grounding validation),
+`auth-service` (register/login/refresh/logout/me), `profile-service` (personal info,
+education, experience, skills, projects, certifications, achievements — all six
+evidence-bearing sections, via an 8-step onboarding wizard and an always-editable
+`/profile` page), `jd-service` (text intake, SSRF-guarded URL intake — ADR-015 — confirm,
+analysis), `resume-service`
+(synchronous generation + history, plus the built-in template catalogue — ADR-013, ADR-016),
+`document-service` (real Resume PDF rendering against the selected template — ADR-018),
+`assessment-service` (ATS + JD-fit scoring, scoped to structured content — ADR-014) and
+`application-service` (the central `Application` aggregate — references only, generation
+lifecycle — ADR-017; email generation — ADR-019; cover-letter generation — ADR-020) are real.
+`notification-service` remains a wired-up skeleton: it builds,
+registers with Eureka, loads config and exposes health, but contains no domain logic yet.
+Sections below marked *(skeleton — Mn)* describe the agreed design for a later milestone.
 
 ---
 
@@ -119,70 +129,92 @@ platform-common
 
 ---
 
-### auth-service *(skeleton — logic in M2)*
+### auth-service **— core implemented**
 
 ```text
 auth-service
 ├── Purpose        Accounts, sign-in, JWT issuance, refresh rotation, Google OAuth
 ├── Port           8081
-├── Responsibilities  registration and BCrypt password hashing; access-token minting;
-│                  refresh-token rotation with reuse detection; OAuth code exchange;
-│                  account lockout; security-event audit trail
+├── Responsibilities  registration and BCrypt (cost 12) password hashing; access-token
+│                  minting; refresh-token rotation with reuse detection
+├── Not yet done   Google OAuth code exchange; account lockout; security-event audit trail
+│                  (M2 remainder)
 ├── Database       careerforge_auth
-├── Collections    users · oauth_accounts · refresh_tokens (TTL) · security_events
+├── Collections    users · refresh_tokens (TTL)   — oauth_accounts, security_events pending
 ├── APIs           /api/auth/**  (see docs/API_CATALOG.md)
-├── Dependencies   MongoDB Atlas, Redis
-├── External       Google OAuth 2.0
-└── Key packages   api/ service/ domain/ repository/ config/
+├── Dependencies   MongoDB Atlas
+├── External       none yet (Google OAuth pending)
+└── Key packages   api/ service/ domain/ repository/ config/ security/
 ```
 
-The JWT signing secret lives here and in the gateway only (ADR-007).
+The JWT signing secret lives here and in the gateway only (ADR-007). Token claims
+(`sub`=userId, `roles`) and the HMAC key derivation match the gateway's `JwtVerifier` exactly
+— minted here, verified there, no shared code between the two.
 
-### profile-service *(skeleton — logic in M3)*
+### profile-service **— core implemented**
 
 ```text
 profile-service
 ├── Purpose        The candidate's verified professional data and the evidence inventory
 ├── Port           8082
-├── Responsibilities  CRUD per profile section; immutable profile versions;
-│                  assign a stable evidenceId to every factual item;
-│                  serve the ID-labelled inventory that grounds all generation
+├── Responsibilities  personal information CRUD; six evidence-bearing sections (education,
+│                  experience, skills, projects, certifications, achievements), each with
+│                  create/update/delete and a stable evidenceId per item (EDU/EXP/SKILL/
+│                  PROJ/CERT/ACH); the combined ID-labelled evidence inventory that grounds
+│                  all generation
+├── Not yet done   immutable profile versions; resume import (M3 remainder)
 ├── Database       careerforge_profile
-├── Collections    profiles · profile_versions
+├── Collections    profiles   — profile_versions pending
 ├── Dependencies   MongoDB Atlas
 ├── External       none
 └── Note           This service is the sole authority on what is true about the candidate.
                    If a fact is not here, no generated document may assert it.
 ```
 
-### jd-service *(skeleton — logic in M4)*
+**Backward compatibility.** Profiles created before a section existed simply have an empty
+list for it — Spring Data leaves a missing document field at its Java default rather than
+erroring, so pre-existing profiles with only personal info and experience load unchanged.
+Verified directly against a real profile document written before this section existed.
+
+### jd-service **— core implemented**
 
 ```text
 jd-service
-├── Purpose        Ingest, fetch, extract, normalise, analyse and confirm job descriptions
+├── Purpose        Ingest, normalise, analyse and confirm job descriptions
 ├── Port           8083
-├── Responsibilities  text/file/URL intake; SSRF-hardened fetching; Tika/jsoup extraction;
-│                  normalisation; "is this actually a job posting?" detection;
-│                  requirement extraction and classification; mandatory user confirmation
+├── Responsibilities  text and URL intake; whitespace/blank-line normalisation; mandatory
+│                  user confirmation before analysis; requirement extraction via
+│                  ai-service, cached per JD version
+├── URL intake     SsrfGuard + JdUrlFetcher (scheme/port/private-address validation, every
+│                  redirect hop re-validated, text/html-only, 3MB cap, 5s/10s timeouts) →
+│                  JobPostingExtractor (schema.org JobPosting JSON-LD when present, generic
+│                  readable text otherwise) — see ARCHITECTURE_DECISIONS.md ADR-015
+├── Not yet done   file upload (Tika) intake — only sourceType=TEXT/URL exist today
 ├── Database       careerforge_jd
 ├── Collections    job_descriptions · jd_versions · jd_analyses
-├── Dependencies   MongoDB Atlas, Redis, ai-service
-├── External       arbitrary websites — treated as hostile
-└── Security       every fetch passes the SSRF predicate; JD text is data, never instruction
+├── Dependencies   MongoDB Atlas, ai-service, and now arbitrary public web servers (URL
+│                  intake) — treated as hostile, never trusted, guarded per ADR-015
+├── External       arbitrary websites, for URL intake only — treated as hostile
+└── Security       JD text is fenced as data, never instruction, before reaching ai-service;
+                   every fetched URL passes the SSRF guard first (ADR-015)
 ```
 
-### resume-service *(skeleton — logic in M5)*
+### resume-service **— core implemented, synchronously (ADR-013)**
 
 ```text
 resume-service
 ├── Purpose        Orchestrate generation and own resume version history
 ├── Port           8084
-├── Responsibilities  assemble the generation job from confirmed JD + evidence;
-│                  drive the two-stage AI pipeline; persist validated content;
-│                  request rendering; expose job status; own the template catalogue
+├── Responsibilities  load confirmed JD analysis (jd-service) + evidence (profile-service);
+│                  drive the two-stage AI pipeline (ai-service); persist the result;
+│                  surface gaps (unmatched requirements) and removed (ungrounded) content
+├── Not yet done   async job queue + status polling, version history, template catalogue,
+│                  document rendering handoff (M5 remainder + M6)
 ├── Database       careerforge_resume
-├── Collections    resume_generations · resume_versions · templates
-├── Dependencies   profile-service, jd-service, ai-service, document-service, Redis
+├── Collections    resume_generations · resume_versions   — templates pending
+├── Dependencies   profile-service, jd-service, ai-service (all reached directly via Eureka,
+│                  not through the gateway — caller identity is forwarded via X-User-Id,
+│                  see FeignHeaderForwardingConfig)
 └── Note           The only orchestrator. Nothing calls back into it except assessment reads.
 ```
 
@@ -240,47 +272,81 @@ The class is deliberately biased towards rejection: a false positive costs one
 regeneration, a false negative puts an invented claim in a document a real person sends to
 an employer under their name.
 
-### assessment-service *(skeleton — logic in M7)*
+### assessment-service **— core implemented (ADR-014)**
 
 ```text
 assessment-service
 ├── Purpose        Deterministic scoring and explainability
 ├── Port           8086
-├── Responsibilities  ten weighted ATS checks with fractional sub-checks (ADR-008);
-│                  JD compatibility = 0.50·coverage + 0.20·keyword + 0.20·seniority
-│                  + 0.10·recency; screening-readiness band (ADR-009); recommendations
+├── Responsibilities  seven weighted ATS checks against structured resume content
+│                  (fractional sub-checks, ADR-008); JD compatibility =
+│                  0.50·coverage + 0.20·keyword + 0.20·seniority + 0.10·recency;
+│                  screening-readiness band (ADR-009); recommendations
+├── Scope deviation   the blueprint's ten checks assume a rendered PDF/DOCX to inspect
+│                  (fonts, layout, header/footer) — this engine deliberately scores what's
+│                  measurable from JSON content instead (ADR-014); document-service now
+│                  renders a real PDF (ADR-018), but this scope was never solely "there's no
+│                  renderer yet" — revisiting it is unrelated follow-up work, not a gap here
 ├── Database       careerforge_assessment
-├── Collections    ats_assessments · jd_fit_assessments · recommendations
-├── Dependencies   resume-service, jd-service, document-service
+├── Collections    ats_assessments · jd_fit_assessments (recommendations embedded — ADR-014)
+├── Dependencies   resume-service, jd-service, profile-service — all reached directly via
+│                  Eureka, not through the gateway, identity forwarded via X-User-Id
 └── Rule           No score is ever requested from the LLM. Every number is reproducible
                    from stored inputs and traceable to a requirement and an evidence ID.
 ```
 
-### document-service *(skeleton — logic in M6)*
+### document-service **— real Resume PDF rendering (ADR-018)**
 
 ```text
 document-service
 ├── Purpose        Deterministic rendering and private artifact custody
 ├── Port           8087
-├── Responsibilities  render validated JSON through versioned templates;
-│                  OpenHTMLToPDF for PDF, docx4j for DOCX; machine-readability self-check;
-│                  upload under a random object key; issue short-lived presigned URLs
+├── Responsibilities  render a resume version's structured content, merged with the
+│                  candidate's profile facts, through one of the three built-in templates
+│                  (Thymeleaf HTML/CSS → jsoup → openhtmltopdf-pdfbox → PDF); upload under a
+│                  random object key; stream authenticated downloads back through itself
+├── Runs synchronously in the request — no render-job queue yet (ADR-018, same deviation
+│                  pattern as resume generation, ADR-013)
+├── Not yet done   DOCX (docx4j dependency present, unused), cover-letter rendering
 ├── Database       careerforge_document   (ADR-002)
-├── Collections    rendered_documents
-├── Dependencies   MinIO (dev) / S3 (prod)
-└── Security       private bucket, no static directory, ownership check before every URL
+├── Collections    rendered_documents  (one row per resumeVersionId+format; ADR-018)
+├── Dependencies   resume-service, profile-service — reached directly via Eureka, not
+│                  through the gateway, identity forwarded via X-User-Id; MinIO (dev) / S3 (prod)
+├── APIs           /api/documents/**  (see docs/API_CATALOG.md)
+└── Security       private bucket, no static directory or presigned URL — every download is
+                   streamed through this service's own ownership-checked endpoint (ADR-018)
 ```
 
-### application-service *(skeleton — logic in M8)*
+### application-service **— core implemented (ADR-017); email generation implemented (ADR-019); cover-letter generation implemented (ADR-020)**
 
 ```text
 application-service
-├── Purpose        Cover letter, email, Gmail drafts, history and status tracking
+├── Purpose        Own the central Application aggregate: job + generation type + template +
+│                  references to the resume, cover letter, email and both assessments
 ├── Port           8088
+├── Responsibilities  verify + denormalise from jd-service on create; verify a supplied
+│                  resumeVersionId/templateId against resume-service; derive status per
+│                  generationType (never accepted from the caller); enforce legal status
+│                  transitions; append-only status history; generate application-email
+│                  content (subject/greeting/closing/signature assembled deterministically
+│                  from already-verified data — job title/company, the candidate's real
+│                  name — ai-service supplies only the grounded highlight paragraph(s),
+│                  ADR-019); generate cover-letter content (evidence selection then grounded
+│                  content, mirroring resume-service's own two-Groq-call pipeline, ADR-020)
+├── Not yet done   Gmail drafts, combined (ALL) generation (GenerationType represents them;
+│                  nothing produces them yet — M8 remainder)
 ├── Database       careerforge_application
-├── Collections    applications · application_status_history
-├── External       Gmail API (drafts scope only)
-└── Rule           Creates drafts. Never sends an application on the user's behalf.
+├── Collections    applications · application_status_history · emails · cover_letter_versions
+├── APIs           /api/applications/**  (see docs/API_CATALOG.md)
+├── Dependencies   jd-service, resume-service, assessment-service, profile-service, ai-service
+│                  — all reached directly via Eureka, not through the gateway, identity
+│                  forwarded via X-User-Id
+├── External       Gmail API (drafts scope only — not yet integrated)
+└── Rule           References only, never a copy of what another service owns. Every AI call
+                   it makes (email, cover letter) is grounded exactly like every other
+                   generated statement in this product — never asked to restate a fact
+                   that's already known with certainty, and always checked against the
+                   candidate's real evidence for everything else.
 ```
 
 ### notification-service *(skeleton — logic in M8)*
@@ -298,89 +364,194 @@ notification-service
 
 ## 3. Request flows
 
-### Authentication *(M2)*
+### Authentication **— implemented**
 
 ```text
 React
  ↓  POST /api/auth/login {email, password}
 Gateway            path is public → no token required, 5 req/s per IP
  ↓
-Auth Service       BCrypt verify → record security_event → mint tokens
+Auth Service       BCrypt verify → mint tokens
  ↓
 MongoDB Atlas      users, refresh_tokens (rotating family, TTL-expired)
  ↓
 JWT                access token (15 min) in the body;
-                   refresh token in an HttpOnly · Secure · SameSite=Lax cookie
+                   refresh token in an HttpOnly · SameSite=Lax cookie
+                   (Secure when REFRESH_COOKIE_SECURE=true — plain HTTP locally)
  ↓
-React              access token held in memory only — never localStorage
+React              access token held in memory only — never localStorage; a fresh page
+                   load silently calls /api/auth/refresh before rendering anything that
+                   needs auth (services/session.ts)
 ```
 
 On refresh, the presented token is invalidated and a successor issued. Presenting an
-already-rotated token revokes the entire family and writes a `REFRESH_REUSE` security event.
+already-rotated token revokes the entire family. Account lockout and the
+`security_events` audit trail are not yet implemented (M2 remainder).
 
-### JD processing *(M4)*
+### JD processing — text and URL intake implemented; file intake pending
 
 ```text
 React
- ↓  POST /api/jd | /api/jd/upload | /api/jd/fetch-url
+ ↓  POST /api/jd                                              — implemented (TEXT)
+ ↓  POST /api/jd/fetch-url                                     — implemented (URL, ADR-015)
+ ↓  POST /api/jd/upload                                        — not yet implemented
 Gateway            authenticated, 5 req/s per user
  ↓
 JD Service
- ↓  URL  → SSRF predicate → safe fetcher (redirect, timeout, size, content-type caps) → jsoup
- ↓  File → MIME allowlist → magic-byte check → size cap → quarantine → Tika
- ↓  Text→ length and character-class validation
+ ↓  URL  → SsrfGuard (scheme/port/private-address, every redirect hop) → JdUrlFetcher
+ ↓         (text/html-only, 3MB cap, 5s/10s timeouts) → JobPostingExtractor (JSON-LD          ✅
+ ↓         JobPosting if present, else generic readable text)
+ ↓  File → MIME allowlist → magic-byte check → size cap → quarantine → Tika                     (pending)
+ ↓  Text→ length validation, whitespace/blank-line normalisation                                 ✅
  ↓
-JD normalisation   whitespace, ligatures, bullet glyphs, zero-width character removal
+User confirmation  MANDATORY, and gated *before* analysis (stricter than the diagram implies
+                   below) — an AI call is itself something ADR-012 says only ever happens
+                   against confirmed content.
  ↓
-"is this a job posting?"   → JD_VALIDATION_ERROR when it is not
- ↓
-JD analysis        title · company · seniority · responsibilities · required vs preferred
-                   skills · education · certifications · years · technologies · keywords,
-                   each classified HARD_REQUIRED | PREFERRED | RESPONSIBILITY | SKILL |
-                   TECHNOLOGY | EDUCATION | CERTIFICATION
- ↓
-User confirmation  MANDATORY. Nothing downstream may run against an unconfirmed JD.
+JD analysis        title · company · seniority · keywords · requirements, each classified
+                   HARD_REQUIRED | PREFERRED | RESPONSIBILITY | SKILL | TECHNOLOGY |
+                   EDUCATION | CERTIFICATION. Computed on first read, cached on the JD
+                   version thereafter.
 ```
 
-### Resume generation *(M5–M6)*
+### Resume generation **— implemented, synchronously (ADR-013)**
 
 ```text
-Confirmed JD  +  Candidate profile  +  Selected evidence
+Confirmed JD analysis (jd-service)  +  Evidence inventory (profile-service)
                           ↓
-                     AI Service
+                     AI Service         evidence-selection: requirement → evidence IDs
                           ↓
                         Groq
+                          ↓
+                     AI Service         resume-content: write, then verify every statement
                           ↓
                   Structured JSON            ← JSON Schema validated
                           ↓
               Grounding validation           ← evidence IDs must resolve; no invented
                           ↓                     metrics, employers, dates, URLs
-                    Resume Service            ← persists resume_versions
+                    Resume Service            ← persists resume_versions, returns directly
                           ↓
-                   Document Service
-                          ↓
-                      PDF / DOCX              ← private bucket, presigned download
+                   Document Service            ← not yet implemented — no PDF/DOCX yet
 ```
 
 Failure path: schema or grounding failure triggers exactly one regeneration. If it fails
-again, the unsupported claim is removed and reported to the user as a missing requirement —
-it is never silently kept.
+again, the unsupported claim is removed (`removedSections`) and reported to the user —
+never silently kept. Requirements no evidence could support are reported as `gaps`, never
+fabricated to close the score.
 
-### ATS assessment *(M7)*
+### ATS assessment **— implemented, scoped to content (ADR-014)**
 
 ```text
-Resume version  +  Confirmed JD
+Resume version  +  its JD analysis  +  caller's profile   (fetched via Eureka, not the gateway)
               ↓
       Assessment Service
               ↓
-        ATS Engine                deterministic, ten weighted checks, fractional sub-scores
+        ATS Engine                deterministic, seven weighted checks, fractional
+                                  sub-scores — content-based, not a rendered document
               ↓
      JD Compatibility             coverage · keyword · seniority · recency
               ↓
    Screening Readiness            STRONG | COMPETITIVE | STRETCH | WEAK_FIT, ordered rules
               ↓
-   Explanation payload            per-requirement matches, gaps, and the rule that fired
+   Explanation payload            per-requirement matches, gaps, matched/missing keywords,
+                                  recommendations that never invent a skill or experience
 ```
+
+Triggered automatically by the frontend right after generation (`ProcessingPage`), and
+re-runnable on demand from the result page if it's ever missing (`POST` is idempotent — see
+`docs/API_CATALOG.md` §2).
+
+### Application creation **— implemented (ADR-017)**
+
+```text
+POST /api/applications  { jobDescriptionId, generationType, templateId?, resumeVersionId? }
+              ↓
+      Application Service
+              ↓
+   verify jobDescriptionId          jd-service, GET /api/jd/{id}      — 404 if not owned
+   verify templateId (if any)       resume-service, GET .../templates/{id}
+   verify resumeVersionId (if any)  resume-service, GET /api/resumes/{id}
+                                    + must belong to the same jobDescriptionId
+   look up assessed (best effort)   assessment-service, GET .../resume-versions/{id}
+              ↓
+        derive status               DRAFT (no artifact yet) · COMPLETED (every artifact the
+                                    generationType requires now exists) · PROCESSING (some,
+                                    but not all, exist yet)
+              ↓
+              save
+```
+
+`ProcessingPage` calls this directly for `EMAIL_ONLY` (see below); the `RESUME_ONLY` path
+still calls `resume-service`/`assessment-service` directly and is unmodified — `POST
+/api/applications` is not yet in that path, since resume-service already owns generation
+there (ADR-013) and nothing requires routing it through the aggregate to exist.
+
+### Email generation **— implemented (ADR-019)**
+
+```text
+POST /api/applications/{id}/email   (no body — everything needed is already known)
+              ↓
+      Email Generation Service
+              ↓
+   require generationType = EMAIL_ONLY, and a confirmed jobTitle on the application
+   fetch evidence                    profile-service, GET /api/profile/evidence
+                                    — 400 VALIDATION_ERROR if empty, same guard resume uses
+   fetch candidate name (best effort) profile-service, GET /api/profile
+              ↓
+   generate ONE grounded highlight   ai-service, POST /internal/ai/email-content
+   paragraph, citing evidence        (schema validate → grounding validate → regenerate
+                                    once → drop-and-report; mirrors CoverLetterContentService)
+              ↓
+   assemble deterministically        subject + greeting/closing/sign-off frame, from
+                                    Application.jobTitle/company + the candidate's real name
+                                    — never model output
+              ↓
+   persist EmailContent (versioned)  attach emailId to the Application, recompute status
+```
+
+Wired into the frontend wizard: `OutputTypePage`'s "Email Content" card carries
+`?type=EMAIL_ONLY` as a query param through `JobDescriptionPage` → `ReviewPage` (skips the
+resume-only template step) → `ProcessingPage`, which creates the `Application` then calls
+this endpoint, landing on `/results/email/:applicationId` (`EmailResultPage`: copy subject,
+copy email, download as text, regenerate). The `RESUME_ONLY` path is unchanged throughout.
+
+### Cover-letter generation **— implemented (ADR-020)**
+
+```text
+POST /api/applications/{id}/cover-letter   (no body)
+              ↓
+      Cover Letter Generation Service
+              ↓
+   require generationType = COVER_LETTER_ONLY
+   fetch confirmed JD analysis        jd-service, GET /api/jd/{id}/analysis
+                                      — 409 JD_NOT_CONFIRMED if not confirmed yet
+   fetch evidence                     profile-service, GET /api/profile/evidence
+                                      — 400 VALIDATION_ERROR if empty, same guard resume uses
+              ↓
+   select evidence per requirement    ai-service, POST /internal/ai/evidence-selection
+                                      (same call resume-service makes — Stage 1)
+              ↓
+   generate grounded letter content   ai-service, POST /internal/ai/cover-letter (Stage 2:
+   citing the selected evidence       schema validate → grounding validate → regenerate once
+                                      → drop-and-report, mirroring ResumeContentService).
+                                      Job title/company are named without a citation
+                                      (GroundingValidator's 3-arg overload) — everything else
+                                      a paragraph states still needs one.
+              ↓
+   persist CoverLetterVersion         attach coverLetterVersionId to the Application,
+   (versioned)                        recompute status
+```
+
+Unlike email generation, this is a real two-stage pipeline — a letter needs to speak to the
+job's actual prioritised requirements, not just restate a title and company — so it runs
+resume-service's own pipeline shape (ADR-013), just orchestrated from application-service
+because that's where the public endpoint and the `Application` aggregate both live (ADR-017).
+
+Wired into the frontend wizard identically to email: `OutputTypePage`'s "Cover Letter" card
+carries `?type=COVER_LETTER_ONLY` through `JobDescriptionPage` → `ReviewPage` (skips the
+template step) → `ProcessingPage` (creates the `Application`, then calls this endpoint),
+landing on `/results/cover-letter/:applicationId` (`CoverLetterResultPage`: copy, download as
+text, regenerate). Both `RESUME_ONLY` and `EMAIL_ONLY` are unchanged.
 
 ### Document download *(M6)*
 

@@ -29,14 +29,31 @@ public class ResumeVersion {
     @Field("jobDescriptionId")
     private String jobDescriptionId;
 
+    /** Denormalised from the JD analysis at generation time, so a dashboard list doesn't
+     *  need to cross-call jd-service for every row. */
+    @Field("jobTitle")
+    private String jobTitle;
+
+    @Field("company")
+    private String company;
+
     @Field("version")
     private int version;
+
+    @Field("templateId")
+    private String templateId;
+
+    @Field("templateVersion")
+    private String templateVersion;
 
     @Field("content")
     private Map<String, Object> content;
 
     @Field("evidenceMatches")
     private List<Map<String, Object>> evidenceMatches;
+
+    @Field("gaps")
+    private List<Map<String, Object>> gaps;
 
     @Field("groundingReport")
     private Map<String, Object> groundingReport;
@@ -58,16 +75,23 @@ public class ResumeVersion {
         // Spring Data
     }
 
-    public ResumeVersion(String resumeGenerationId, String userId, String jobDescriptionId, int version,
-                         Map<String, Object> content, List<Map<String, Object>> evidenceMatches,
+    public ResumeVersion(String resumeGenerationId, String userId, String jobDescriptionId, String jobTitle,
+                         String company, int version, String templateId, String templateVersion,
+                         Map<String, Object> content,
+                         List<Map<String, Object>> evidenceMatches, List<Map<String, Object>> gaps,
                          Map<String, Object> groundingReport, List<String> removedSections,
                          String promptVersion, String modelId) {
         this.resumeGenerationId = resumeGenerationId;
         this.userId = userId;
         this.jobDescriptionId = jobDescriptionId;
+        this.jobTitle = jobTitle;
+        this.company = company;
         this.version = version;
+        this.templateId = templateId;
+        this.templateVersion = templateVersion;
         this.content = content;
         this.evidenceMatches = evidenceMatches;
+        this.gaps = gaps;
         this.groundingReport = groundingReport;
         this.removedSections = removedSections;
         this.promptVersion = promptVersion;
@@ -90,6 +114,26 @@ public class ResumeVersion {
         return jobDescriptionId;
     }
 
+    public String jobTitle() {
+        return jobTitle;
+    }
+
+    public String company() {
+        return company;
+    }
+
+    public String templateId() {
+        return templateId;
+    }
+
+    public String templateVersion() {
+        return templateVersion;
+    }
+
+    public Instant createdAt() {
+        return createdAt;
+    }
+
     public Map<String, Object> content() {
         return content;
     }
@@ -98,15 +142,15 @@ public class ResumeVersion {
         return evidenceMatches;
     }
 
+    public List<Map<String, Object>> gaps() {
+        return gaps;
+    }
+
     public Map<String, Object> groundingReport() {
         return groundingReport;
     }
 
     public List<String> removedSections() {
         return removedSections;
-    }
-
-    public Instant createdAt() {
-        return createdAt;
     }
 }

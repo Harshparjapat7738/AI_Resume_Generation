@@ -1,6 +1,7 @@
 package ai.careerforge.jd.api;
 
 import ai.careerforge.common.security.CallerId;
+import ai.careerforge.jd.api.dto.JdRequests.FetchUrlRequest;
 import ai.careerforge.jd.api.dto.JdRequests.SubmitJdRequest;
 import ai.careerforge.jd.api.dto.JdResponses.JdAnalysisResponse;
 import ai.careerforge.jd.api.dto.JdResponses.JdDetailResponse;
@@ -44,12 +45,21 @@ public class JdController {
         return ResponseEntity.status(HttpStatus.CREATED).body(toSummary(submission.jobDescription()));
     }
 
+    /** SSRF-guarded fetch — see {@code SsrfGuard} and ARCHITECTURE_DECISIONS.md ADR-015. */
+    @PostMapping("/fetch-url")
+    public ResponseEntity<JdSummaryResponse> fetchUrl(@CallerId String userId,
+                                                       @Valid @RequestBody FetchUrlRequest request) {
+        JdService.Submission submission = jdService.fetchUrl(userId, request.url());
+        return ResponseEntity.status(HttpStatus.CREATED).body(toSummary(submission.jobDescription()));
+    }
+
     @GetMapping("/{id}")
     public ResponseEntity<JdDetailResponse> get(@CallerId String userId, @PathVariable String id) {
         JobDescription jd = jdService.requireOwned(userId, id);
         JdVersion version = jdService.currentVersion(jd);
         return ResponseEntity.ok(new JdDetailResponse(
-                jd.id(), jd.status().name(), jd.sourceType(), jd.title(), jd.company(),
+                jd.id(), jd.status().name(), jd.sourceType(), jd.sourceUrl(),
+                jd.title(), jd.company(), jd.location(), jd.skillsSummary(), jd.experienceSummary(),
                 version.rawText(), jd.currentVersion(), jd.createdAt()));
     }
 

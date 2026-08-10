@@ -44,9 +44,12 @@ springdoc:
   swagger-ui:
     path: /swagger-ui.html
 
+# The request body can contain JD and profile text; never log it.
 logging:
   pattern:
     level: "%5p [${spring.application.name},%X{traceId:-},%X{spanId:-},%X{correlationId:-}]"
+  level:
+    org.springframework.web.reactive.function.client: WARN
 
 # ---------------------------------------------------------------------------
 # Groq. The API key is supplied via GROQ_API_KEY and exists in this process only.
@@ -79,8 +82,3 @@ resilience4j:
         limitForPeriod: 30
         limitRefreshPeriod: 60s
         timeoutDuration: 5s
-
-# The request body can contain JD and profile text; never log it.
-logging:
-  level:
-    org.springframework.web.reactive.function.client: WARN

@@ -67,3 +67,34 @@ export async function apiFetch<T>(path: string, init: RequestInit = {}): Promise
 
   return payload as T;
 }
+
+/**
+ * For binary responses (a rendered PDF) — apiFetch always parses JSON, which a PDF isn't.
+ * Same auth/credentials handling, but on a non-OK response it still tries to parse the
+ * standard JSON error envelope so callers get the same ApiError shape either way.
+ */
+export async function apiFetchBlob(path: string, init: RequestInit = {}): Promise<Blob> {
+  const headers = new Headers(init.headers);
+  if (accessToken) {
+    headers.set('Authorization', `Bearer ${accessToken}`);
+  }
+
+  const response = await fetch(`${BASE_URL}${path}`, {
+    ...init,
+    headers,
+    credentials: 'include',
+  });
+
+  if (!response.ok) {
+    const payload: unknown = await response.json().catch(() => null);
+    throw new ApiError(response.status, (payload as ApiErrorBody) ?? {
+      timestamp: new Date().toISOString(),
+      status: response.status,
+      code: 'UNKNOWN_ERROR',
+      message: 'Request failed.',
+      path,
+    });
+  }
+
+  return response.blob();
+}

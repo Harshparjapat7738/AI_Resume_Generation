@@ -1,4 +1,7 @@
 import { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
+import { logout as logoutRequest } from '@/services/authApi';
+import { useSession, useSessionActions } from '@/services/session';
 import { SparkleIcon } from './icons';
 
 const navLinks = [
@@ -12,6 +15,8 @@ const navLinks = [
 export function SiteHeader() {
   const [scrolled, setScrolled] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
+  const { data: user } = useSession();
+  const { clearSession } = useSessionActions();
 
   useEffect(() => {
     const onScroll = () => setScrolled(window.scrollY > 8);
@@ -19,6 +24,19 @@ export function SiteHeader() {
     window.addEventListener('scroll', onScroll, { passive: true });
     return () => window.removeEventListener('scroll', onScroll);
   }, []);
+
+  const handleLogout = async () => {
+    setMenuOpen(false);
+    try {
+      await logoutRequest();
+    } catch {
+      // Clear the local session regardless — the cookie is httpOnly and server-revoked either way.
+    }
+    // See the matching comment in AppHeader.tsx's handleLogout for why this is a hard
+    // navigation rather than react-router's navigate().
+    clearSession();
+    window.location.assign('/');
+  };
 
   return (
     <header
@@ -50,12 +68,43 @@ export function SiteHeader() {
           ))}
         </nav>
 
-        <a
-          href="#workflow"
-          className="hidden rounded-full bg-ink px-4 py-2 text-sm font-medium text-void transition-transform hover:-translate-y-0.5 md:inline-block"
-        >
-          See how it works
-        </a>
+        <div className="hidden items-center gap-5 md:flex">
+          {user ? (
+            <>
+              <Link to="/dashboard" className="text-sm text-ink-muted transition-colors hover:text-ink">
+                Dashboard
+              </Link>
+              <Link to="/profile" className="text-sm text-ink-muted transition-colors hover:text-ink">
+                Profile
+              </Link>
+              <button
+                type="button"
+                onClick={handleLogout}
+                className="text-sm text-ink-muted transition-colors hover:text-ink"
+              >
+                Log out
+              </button>
+              <Link
+                to="/generate"
+                className="rounded-full bg-ink px-4 py-2 text-sm font-medium text-void transition-transform hover:-translate-y-0.5"
+              >
+                Generate
+              </Link>
+            </>
+          ) : (
+            <>
+              <Link to="/login" className="text-sm text-ink-muted transition-colors hover:text-ink">
+                Log in
+              </Link>
+              <Link
+                to="/generate"
+                className="rounded-full bg-ink px-4 py-2 text-sm font-medium text-void transition-transform hover:-translate-y-0.5"
+              >
+                Get started
+              </Link>
+            </>
+          )}
+        </div>
 
         <button
           type="button"
@@ -98,15 +147,67 @@ export function SiteHeader() {
                 </a>
               </li>
             ))}
-            <li>
-              <a
-                href="#workflow"
-                onClick={() => setMenuOpen(false)}
-                className="mt-1 inline-block rounded-full bg-ink px-4 py-2 text-sm font-medium text-void"
-              >
-                See how it works
-              </a>
-            </li>
+            {user ? (
+              <>
+                <li>
+                  <Link
+                    to="/dashboard"
+                    onClick={() => setMenuOpen(false)}
+                    className="block text-sm text-ink-muted hover:text-ink"
+                  >
+                    Dashboard
+                  </Link>
+                </li>
+                <li>
+                  <Link
+                    to="/profile"
+                    onClick={() => setMenuOpen(false)}
+                    className="block text-sm text-ink-muted hover:text-ink"
+                  >
+                    Profile
+                  </Link>
+                </li>
+                <li>
+                  <button
+                    type="button"
+                    onClick={handleLogout}
+                    className="block text-sm text-ink-muted hover:text-ink"
+                  >
+                    Log out
+                  </button>
+                </li>
+                <li>
+                  <Link
+                    to="/generate"
+                    onClick={() => setMenuOpen(false)}
+                    className="mt-1 inline-block rounded-full bg-ink px-4 py-2 text-sm font-medium text-void"
+                  >
+                    Generate
+                  </Link>
+                </li>
+              </>
+            ) : (
+              <>
+                <li>
+                  <Link
+                    to="/login"
+                    onClick={() => setMenuOpen(false)}
+                    className="block text-sm text-ink-muted hover:text-ink"
+                  >
+                    Log in
+                  </Link>
+                </li>
+                <li>
+                  <Link
+                    to="/generate"
+                    onClick={() => setMenuOpen(false)}
+                    className="mt-1 inline-block rounded-full bg-ink px-4 py-2 text-sm font-medium text-void"
+                  >
+                    Get started
+                  </Link>
+                </li>
+              </>
+            )}
           </ul>
         </nav>
       )}

@@ -1,5 +1,5 @@
 # CareerForge AI
-
+#  .\scripts\run-local.ps1 -Services all -SkipBuild
 > Turn one verified professional profile into a job-specific application that is relevant,
 > ATS-friendly, explainable, and grounded in your real experience.
 
@@ -20,17 +20,43 @@ probability.
 
 ## Status
 
-**Milestone 1 of 9 — foundation, plus a working AI service.** The repository, Maven
-reactor, Docker stack, Config Server, Eureka, API Gateway, observability and CI are in
-place and run.
+**A first real vertical slice is live, ahead of the milestone-by-milestone plan.** The
+platform tier (Maven reactor, Docker stack, Config Server, Eureka, API Gateway,
+observability, CI) is in place and runs, and so is an end-to-end product path:
 
-`ai-service` is fully implemented ahead of schedule: Groq client with retries and metrics,
-versioned prompts, JSON Schema validation, and the grounding validator that enforces the
-no-fabrication rule. It is callable today at `http://localhost:8085/internal/ai/*` with a
-`GROQ_API_KEY` set — see *Trying the AI service* below.
+**Register → build a complete profile (personal info, education, experience, skills,
+projects, certifications, achievements) → paste a job description → confirm it → see it
+analysed → generate grounded resume content → see a real ATS/JD-fit score, honestly
+reported gaps and recommendations.**
 
-The other eight business services are wired skeletons: they build, register, load
-configuration and report health, but contain no domain logic yet.
+`auth-service`, `profile-service` (all six evidence-bearing sections via an 8-step
+onboarding wizard and an always-editable `/profile` page), `jd-service` (paste or URL
+intake — the URL path is a server-side fetch behind an SSRF guard, never browser-side
+scraping, see [ADR-015](docs/ARCHITECTURE_DECISIONS.md#adr-015) — plus confirm and
+analysis), `resume-service` (generation — synchronous, see
+[ADR-013](docs/ARCHITECTURE_DECISIONS.md#adr-013) — plus a built-in template catalogue, see
+[ADR-016](docs/ARCHITECTURE_DECISIONS.md#adr-016)), `document-service` (real Resume PDF
+rendering against the selected template, streamed through an authenticated download endpoint
+— see [ADR-018](docs/ARCHITECTURE_DECISIONS.md#adr-018)), `assessment-service` (ATS + JD-fit
+scoring, scoped to structured content rather than a rendered document — see
+[ADR-014](docs/ARCHITECTURE_DECISIONS.md#adr-014)) and `application-service` (the central
+`Application` aggregate that ties a job, its generation type, template, resume and
+assessments together by reference — see
+[ADR-017](docs/ARCHITECTURE_DECISIONS.md#adr-017)) are real, alongside `ai-service`, which
+was implemented ahead of schedule: Groq client with retries and metrics, versioned prompts,
+JSON Schema validation, and the grounding validator that enforces the no-fabrication rule.
+
+Email generation (subject + body, grounded — [ADR-019](docs/ARCHITECTURE_DECISIONS.md#adr-019))
+and cover-letter generation (grounded, evidence-selected against the job's actual
+requirements — [ADR-020](docs/ARCHITECTURE_DECISIONS.md#adr-020)) are also real, both via
+`application-service`'s central `Application` aggregate. Not yet implemented: Google OAuth,
+JD file (PDF/DOCX) intake, custom-upload/online templates, combined (`ALL`) generation,
+Gmail drafts, and DOCX rendering. See
+[`docs/API_CATALOG.md`](docs/API_CATALOG.md) for exactly what's implemented versus planned, and
+[`docs/API_INTEGRATION.md`](docs/API_INTEGRATION.md) for how the frontend calls it.
+
+`notification-service` remains a wired skeleton: it builds, registers, loads configuration
+and reports health, but contains no domain logic yet.
 
 Progress and exit criteria: [`docs/IMPLEMENTATION_PLAN.md`](docs/IMPLEMENTATION_PLAN.md).
 
@@ -45,11 +71,11 @@ Progress and exit criteria: [`docs/IMPLEMENTATION_PLAN.md`](docs/IMPLEMENTATION_
 | JD confirmation | The user must confirm the extracted JD before anything is generated |
 | JD analysis | Requirements extracted and classified: hard-required, preferred, responsibility, skill, technology, education, certification |
 | Grounded generation | Two-stage Groq pipeline — evidence selection, then content — validated against a JSON schema and a grounding check |
-| Documents | Three ATS-safe, single-column templates rendered deterministically to PDF and DOCX |
+| Documents | Three ATS-safe, single-column templates rendered deterministically to PDF (DOCX planned) |
 | ATS score | Ten weighted checks computed in Java, never asked of the LLM, explainable down to the sub-check |
 | JD compatibility | Coverage, keyword match, seniority alignment and recency, traceable to requirement and evidence |
 | Screening readiness | `STRONG` · `COMPETITIVE` · `STRETCH` · `WEAK FIT`, with the reason shown |
-| Applications | Cover letter, email, Gmail **draft** (never auto-sent), history and status tracking |
+| Applications | Grounded application email and cover letter generation; generation history and lifecycle status tracked per application; Gmail **draft** (never auto-sent) planned |
 
 ---
 
@@ -272,8 +298,8 @@ exactly as they do in Docker.
 | resume-service | 8084 | ❌ | Generation orchestration, versions |
 | ai-service | 8085 | ❌ | Groq boundary (no gateway route) |
 | assessment-service | 8086 | ❌ | ATS and JD compatibility |
-| document-service | 8087 | ❌ | PDF/DOCX rendering, storage |
-| application-service | 8088 | ❌ | Cover letter, email, history |
+| document-service | 8087 | ❌ | PDF rendering, storage (DOCX planned) |
+| application-service | 8088 | ❌ | Central Application aggregate, history, status, email + cover-letter generation (Gmail drafts pending) |
 | notification-service | 8089 | ❌ | Transactional email |
 | redis | 6379 | ✅ (dev) | Cache, rate limits, job streams |
 | minio | 9000 / 9001 | ✅ (dev) | Object storage + console |
@@ -452,9 +478,10 @@ builds `platform-common` too.
 | [`docs/IMPLEMENTATION_PLAN.md`](docs/IMPLEMENTATION_PLAN.md) | Architecture, dependency graph, API and frontend order, AI and document workflows, security order, testing, Docker, milestones |
 | [`docs/CODEBASE.md`](docs/CODEBASE.md) | What exists today: per-service contracts, request flows, conventions |
 | [`docs/API_CATALOG.md`](docs/API_CATALOG.md) | Every endpoint, error code, and the planned contract |
+| [`docs/API_INTEGRATION.md`](docs/API_INTEGRATION.md) | How the frontend calls the backend: client layer, session handling, screen-to-endpoint map |
 | [`docs/DATABASE.md`](docs/DATABASE.md) | Ownership, document models, indexes, transactions, retention, backup |
 | [`docs/EXTERNAL_APIS.md`](docs/EXTERNAL_APIS.md) | Every integration: variables, setup, limits, security |
-| [`docs/ARCHITECTURE_DECISIONS.md`](docs/ARCHITECTURE_DECISIONS.md) | Twelve ADRs covering every deviation from and gap in the blueprint |
+| [`docs/ARCHITECTURE_DECISIONS.md`](docs/ARCHITECTURE_DECISIONS.md) | Thirteen ADRs covering every deviation from and gap in the blueprint |
 
 ---
 

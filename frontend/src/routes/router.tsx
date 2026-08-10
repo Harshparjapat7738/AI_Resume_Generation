@@ -2,7 +2,13 @@ import { createBrowserRouter } from 'react-router-dom';
 
 /**
  * Route table for the wizard described in the blueprint (§20).
- * Screens are added milestone by milestone; only the landing placeholder exists today.
+ *
+ * The landing page ('/') stays the central page for both anonymous and authenticated
+ * visitors — it is never bypassed after login. /onboarding, /generate/*, /results/:id,
+ * /dashboard and /profile require an active session — see ProtectedRoute. Login/register
+ * always land on /onboarding (new/incomplete profile) or the originally-intended page
+ * (existing, complete profile) — never automatically into a generation workflow. See
+ * docs/API_INTEGRATION.md, "Authentication flow".
  */
 export const router = createBrowserRouter([
   {
@@ -11,5 +17,104 @@ export const router = createBrowserRouter([
       const { LandingPage } = await import('../features/landing/LandingPage');
       return { Component: LandingPage };
     },
+  },
+  {
+    path: '/register',
+    lazy: async () => {
+      const { RegisterPage } = await import('../features/auth/RegisterPage');
+      return { Component: RegisterPage };
+    },
+  },
+  {
+    path: '/login',
+    lazy: async () => {
+      const { LoginPage } = await import('../features/auth/LoginPage');
+      return { Component: LoginPage };
+    },
+  },
+  {
+    lazy: async () => {
+      const { ProtectedRoute } = await import('../components/layout/ProtectedRoute');
+      return { Component: ProtectedRoute };
+    },
+    children: [
+      {
+        path: '/onboarding',
+        lazy: async () => {
+          const { OnboardingPage } = await import('../features/onboarding/OnboardingPage');
+          return { Component: OnboardingPage };
+        },
+      },
+      {
+        path: '/profile',
+        lazy: async () => {
+          const { ProfilePage } = await import('../features/profile/ProfilePage');
+          return { Component: ProfilePage };
+        },
+      },
+      {
+        path: '/dashboard',
+        lazy: async () => {
+          const { DashboardPage } = await import('../features/dashboard/DashboardPage');
+          return { Component: DashboardPage };
+        },
+      },
+      {
+        path: '/generate',
+        lazy: async () => {
+          const { OutputTypePage } = await import('../features/generate/OutputTypePage');
+          return { Component: OutputTypePage };
+        },
+      },
+      {
+        path: '/generate/job',
+        lazy: async () => {
+          const { JobDescriptionPage } = await import('../features/generate/JobDescriptionPage');
+          return { Component: JobDescriptionPage };
+        },
+      },
+      {
+        path: '/generate/review/:jdId',
+        lazy: async () => {
+          const { ReviewPage } = await import('../features/generate/ReviewPage');
+          return { Component: ReviewPage };
+        },
+      },
+      {
+        path: '/generate/template/:jdId',
+        lazy: async () => {
+          const { TemplatePage } = await import('../features/generate/TemplatePage');
+          return { Component: TemplatePage };
+        },
+      },
+      {
+        path: '/generate/processing/:jdId',
+        lazy: async () => {
+          const { ProcessingPage } = await import('../features/generate/ProcessingPage');
+          return { Component: ProcessingPage };
+        },
+      },
+      {
+        path: '/results/:resumeId',
+        lazy: async () => {
+          const { ResultPage } = await import('../features/results/ResultPage');
+          return { Component: ResultPage };
+        },
+      },
+      {
+        path: '/results/email/:applicationId',
+        lazy: async () => {
+          const { EmailResultPage } = await import('../features/results/EmailResultPage');
+          return { Component: EmailResultPage };
+        },
+      },
+      {
+        path: '/results/cover-letter/:applicationId',
+        lazy: async () => {
+          const { CoverLetterResultPage } = await import('../features/results/CoverLetterResultPage');
+          return { Component: CoverLetterResultPage };
+        },
+      },
+    ],
   },
 ]);

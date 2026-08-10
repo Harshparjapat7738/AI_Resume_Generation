@@ -206,4 +206,50 @@ class GroundingValidatorTest {
                     .doesNotContain("Improved performance");
         }
     }
+
+    @Nested
+    @DisplayName("additional-context allowlist (cover letters)")
+    class AdditionalContext {
+
+        @Test
+        @DisplayName("a target company/job title not in evidence is accepted when explicitly allowed")
+        void companyAndJobTitleAreAcceptedWhenPassedAsContext() {
+            GroundingReport report = validator.validate(
+                    List.of(new GeneratedStatement("openingParagraph",
+                            "I am writing to apply for the Backend Engineer role at Globex Corporation.",
+                            List.of("EXP-004"))),
+                    INVENTORY,
+                    java.util.Set.of("Backend Engineer", "Globex Corporation"));
+
+            assertThat(report.passed()).isTrue();
+        }
+
+        @Test
+        @DisplayName("without the allowlist the exact same text is still rejected")
+        void sameTextFailsWithoutContext() {
+            GroundingReport report = check(
+                    "I am writing to apply for the Backend Engineer role at Globex Corporation.",
+                    "EXP-004");
+
+            assertThat(report.passed()).isFalse();
+            assertThat(report.violations())
+                    .anyMatch(v -> v.rule() == GroundingViolation.Rule.UNSUPPORTED_ENTITY
+                            && v.detail().equals("Globex"));
+        }
+
+        @Test
+        @DisplayName("the allowlist does not relax any other rule")
+        void allowlistDoesNotWaiveInventedMetrics() {
+            GroundingReport report = validator.validate(
+                    List.of(new GeneratedStatement("openingParagraph",
+                            "I improved checkout performance by 40% at Globex Corporation.",
+                            List.of("EXP-004"))),
+                    INVENTORY,
+                    java.util.Set.of("Globex Corporation"));
+
+            assertThat(report.passed()).isFalse();
+            assertThat(report.violations())
+                    .anyMatch(v -> v.rule() == GroundingViolation.Rule.INVENTED_METRIC);
+        }
+    }
 }

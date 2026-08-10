@@ -3,9 +3,18 @@
 MongoDB Atlas is the only persistent database. Spring Data MongoDB is the only access
 layer — no JPA, no Hibernate, no Flyway, no MySQL (ADR-001).
 
-**Current state:** Milestone 1 — ownership, models and indexes are specified below.
-Collections are created by their owning service as it is implemented, milestone by
-milestone. No collection exists in Atlas yet.
+**Current state:** ownership, models and indexes are specified below; collections are
+created by their owning service as it is implemented. Real, live in Atlas today: `auth.users`
++ `refresh_tokens`, `profile.profiles` (all six evidence sections — personal info,
+education, experience, skills, projects, certifications, achievements — plus
+`evidenceSequences`; `profile_versions` is still planned), `jd.job_descriptions` +
+`jd_versions` + `jd_analyses` (text and SSRF-guarded URL intake — ADR-015),
+`resume.resume_generations` +
+`resume_versions` + `templates` (synchronous — ADR-013; built-in template catalogue —
+ADR-016), `assessment.ats_assessments` + `jd_fit_assessments` (content-scoped — ADR-014),
+`application.applications` + `application_status_history` + `emails` + `cover_letter_versions`
+(references only, generation lifecycle — ADR-017; email generation — ADR-019; cover-letter
+generation — ADR-020). Everything else below remains a design for a later milestone.
 
 ---
 
@@ -46,7 +55,9 @@ MongoDB Atlas Cluster
 │
 └── careerforge_application    ← application-service
     ├── applications
-    └── application_status_history
+    ├── application_status_history
+    ├── emails
+    └── cover_letter_versions
 ```
 
 `ai-service` and `notification-service` own no database (ADR-002).
@@ -161,11 +172,22 @@ profiles
 └── currentVersion
 ```
 
+**Implementation delta from the shape above** (all six sections are real, live in Atlas):
+`education[]` and `certifications[]` each carry one small additive field beyond what's
+listed here (`description`, `credentialUrl`) for context a bare degree/institution or
+credential ID can't carry; `projects[]` additionally carries `githubUrl`/`liveUrl`. `address`,
+`completionScore` and `currentVersion` as *stored* fields are not implemented — completion
+is instead computed client-side from real section data
+(`computeProfileCompletion()`, `docs/API_INTEGRATION.md`) rather than persisted, and
+`verificationStatus` is not implemented (every item is implicitly self-reported today).
+
 **Evidence identity is the spine of the whole product.** Every factual item carries an
 immutable `evidenceId` (`EXP-004`, `PROJ-002`, `CERT-001`, …), assigned once and never
-reused even after deletion. `verificationStatus` (`SELF_REPORTED` · `DOCUMENT_BACKED` ·
-`VERIFIED`) travels with it. The AI receives only this ID-labelled inventory, and grounding
-validation resolves every generated claim back to these IDs.
+reused even after deletion — implemented via `Profile.nextEvidenceId(prefix)`, a per-user,
+per-prefix counter (`EXP`, `EDU`, `SKILL`, `PROJ`, `CERT`, `ACH`). `verificationStatus`
+(`SELF_REPORTED` · `DOCUMENT_BACKED` · `VERIFIED`) is designed but not yet implemented. The
+AI receives only this ID-labelled inventory (`GET /api/profile/evidence`, combined across
+all six sections), and grounding validation resolves every generated claim back to these IDs.
 
 **`profile_versions`** — an immutable snapshot of the whole profile: `userId`, `version`,
 `snapshot`, `createdAt`, `reason`. A resume records the profile version it was generated
@@ -173,9 +195,13 @@ from, so an old resume stays explainable after the profile changes.
 
 ### careerforge_jd
 
-**`job_descriptions`** — `userId`, `sourceType` (`TEXT` · `URL` · `FILE`), `sourceUrl`,
-`sourceFileKey`, `title`, `company`, `status` (`DRAFT` · `EXTRACTED` · `CONFIRMED` ·
-`REJECTED`), `currentVersion`, `confirmedAt`, `confirmedVersion`.
+**`job_descriptions`** — `userId`, `sourceType` (`TEXT` and `URL` implemented; `FILE`
+planned), `sourceUrl`, `sourceFileKey` (planned, `FILE` only), `title`, `company`, `status`
+(`DRAFT` · `EXTRACTED` · `CONFIRMED` · `REJECTED`), `currentVersion`, `confirmedAt`,
+`confirmedVersion`, plus three fields additive to the originally documented shape —
+**`location`**, **`skillsSummary`**, **`experienceSummary`** — populated only for a
+`sourceType = URL` document whose page embedded schema.org `JobPosting` JSON-LD (see
+ARCHITECTURE_DECISIONS.md ADR-015); null otherwise, never guessed from unstructured HTML.
 
 Generation is impossible unless `status = CONFIRMED` (blueprint §4).
 
@@ -200,9 +226,11 @@ requirements[]
 ### careerforge_resume
 
 **`resume_generations`** — `userId`, `jobDescriptionId`, `jdVersionId`, `profileVersion`,
-`templateId`, `templateVersion`, `status` (`QUEUED` · `SELECTING_EVIDENCE` · `GENERATING` ·
-`VALIDATING` · `RENDERING` · `COMPLETED` · `FAILED`), `currentVersion`, `failureCode`,
-`idempotencyKey`, `startedAt`, `completedAt`.
+`templateId`, `templateVersion` (the latter two implemented — resolved from the `templates`
+catalogue at generation time, defaulting to `classic` when unspecified, see ADR-016), `status`
+(`QUEUED` · `SELECTING_EVIDENCE` · `GENERATING` · `VALIDATING` · `RENDERING` · `COMPLETED` ·
+`FAILED` — simplified to `GENERATING`/`COMPLETED`/`FAILED` today per ADR-013), `currentVersion`,
+`failureCode`, `idempotencyKey`, `startedAt`, `completedAt`.
 
 `idempotencyKey` makes at-least-once Redis Stream delivery safe (ADR-005): a redelivered
 job finds the existing generation and returns it instead of calling Groq again.
@@ -214,9 +242,19 @@ resume JSON), `evidenceMap` (bullet → evidenceId[]), `groundingReport`, `promp
 `evidenceMap` is what makes the product auditable: every rendered sentence can be traced to
 the profile items that justify it.
 
-**`templates`** — catalogue metadata only (ADR-004): `templateId` (`classic` · `modern-ats`
-· `professional`), `displayName`, `description`, `thumbnailKey`, `supportedFormats`,
-`currentVersion`, `enabled`, `atsSafe`.
+**`templates`** — catalogue metadata only (ADR-004), implemented (Phase 1 — built-in only, see
+ADR-016): `_id` = `templateId` (`classic` · `modern-ats` · `professional`), `name`,
+`description`, `previewKey` (frontend maps this to a real local preview component — no static
+thumbnail-asset pipeline exists, so this deliberately isn't a `thumbnailKey`/image reference),
+`type` (`RESUME` · `COVER_LETTER` · `EMAIL` — only `RESUME` has rows today), `version`,
+`status` (`ACTIVE` · `DISABLED`, supersedes the originally-sketched boolean `enabled`),
+`source` (`BUILT_IN` · `CUSTOM_UPLOAD` · `ONLINE` — only `BUILT_IN` has rows today),
+`ownerUserId` (nullable; reserved for `CUSTOM_UPLOAD`), `supportedFormats`, `atsSafe`,
+`createdAt`.
+
+`resume_generations.templateId`/`templateVersion` and `resume_versions.templateId`/
+`templateVersion` (both implemented) record which template a generation used — the selection
+is denormalised onto the version too so it survives independent of the generation row.
 
 ### careerforge_assessment
 
@@ -249,25 +287,83 @@ I get this band?".
 `message`, `relatedRequirementId`). Recommendations describe gaps; they never suggest
 adding a fact the candidate does not have.
 
-### careerforge_document
+### careerforge_document — implemented (ADR-018)
 
 **`rendered_documents`** *(ADR-002)* — `userId`, `resumeVersionId`, `documentType`
-(`RESUME` · `COVER_LETTER`), `format` (`PDF` · `DOCX`), `objectKey` (random UUID path, never
-guessable), `bucket`, `sha256`, `byteSize`, `pageCount`, `templateId`, `templateVersion`,
-`machineReadable`, `renderedAt`, `renderEngineVersion`.
+(`RESUME` implemented · `COVER_LETTER` reserved, unused until application-service produces
+one), `format` (`PDF` implemented · `DOCX` reserved, docx4j dependency present but unused),
+`objectKey` (random UUID path, never guessable), `bucket`, `sha256`, `byteSize`, `pageCount`,
+`templateId`, `templateVersion`, `renderedAt`, `renderEngineVersion`. One row per
+`(resumeVersionId, format)` — re-rendering replaces it rather than accumulating history.
 
-The bucket is private. Only presigned URLs, valid for 300 seconds, are ever issued, and
-only after `userId` matches the caller.
+Deviation from the original sketch: `machineReadable` is not implemented — every PDF this
+service produces has a real text layer (openhtmltopdf never rasterises), so the field would
+be a constant `true` with no query or business purpose yet; adding it is additive whenever a
+second, genuinely different production path (e.g. a scanned upload) exists to distinguish.
 
-### careerforge_application
+The bucket is private (no anonymous read or write — see `minio-init` in `docker-compose.yml`).
+Deviation from the original sketch's presigned-URL download: bytes are streamed through
+document-service's own authenticated endpoint rather than a presigned MinIO URL, so the
+browser never talks to object storage directly and no storage endpoint or credential is ever
+part of a response — see ADR-018.
 
-**`applications`** — `userId`, `jobDescriptionId`, `resumeVersionId`,
-`coverLetterVersionId`, `renderedDocumentIds[]`, `company`, `jobTitle`, `status`
-(`DRAFT` · `READY` · `APPLIED` · `INTERVIEWING` · `OFFER` · `REJECTED` · `WITHDRAWN`),
-`appliedAt`, `emailSubject`, `emailBodyRef`, `gmailDraftId`, `notes`.
+### careerforge_application — implemented (ADR-017, ADR-019, ADR-020)
+
+**`applications`** — the central aggregate: `userId`, `jobDescriptionId`, `jobTitle`,
+`company` (the latter two denormalised from jd-service at creation, same pattern as
+`resume_versions.jobTitle`/`company`), `generationType`
+(`RESUME_ONLY` · `COVER_LETTER_ONLY` · `EMAIL_ONLY` · `ALL` — `RESUME_ONLY`, `EMAIL_ONLY` and
+`COVER_LETTER_ONLY` can each reach `COMPLETED` today; `ALL` cannot until a combined pipeline
+exists), `templateId`
+(validated against resume-service's catalogue when supplied, ADR-016), `resumeVersionId`
+(reference — never a copy of resume content), `coverLetterVersionId` (reference into this
+service's own `cover_letter_versions` collection below, ADR-020), `emailId`
+(reference into this service's own `emails` collection below, ADR-019), `assessed` (boolean —
+whether assessment-service had a scored assessment for `resumeVersionId` the last time it was
+attached; there is no separate assessment ID to store, since assessment-service keys both
+scores uniquely by `resumeVersionId + userId`, ADR-010), `status`
+(`DRAFT` · `PROCESSING` · `COMPLETED` · `FAILED` — the **generation** lifecycle, not the
+job-tracking lifecycle the original sketch above described; see ADR-017), `failureCode`,
+`createdAt`, `updatedAt`.
+
+Deviation from the original sketch: `READY` · `APPLIED` · `INTERVIEWING` · `OFFER` ·
+`REJECTED` · `WITHDRAWN`, `appliedAt`, `emailSubject`, `emailBodyRef`, `gmailDraftId`, `notes`
+and `renderedDocumentIds[]` are **not implemented** — they describe a job-search tracking
+board layered on top of a completed application, a separate later feature from "has
+generation finished" (ADR-017). Adding them is additive whenever that feature is built.
 
 **`application_status_history`** — `applicationId`, `userId`, `fromStatus`, `toStatus`,
-`changedAt`, `note`. Append-only.
+`changedAt`, `note`. Append-only; one row per `PATCH /api/applications/{id}/status` call.
+
+**`emails`** *(ADR-019)* — immutable, one per generation, versioned per application, mirroring
+`resume_versions`: `applicationId`, `userId`, `version`, `subject`, `body` (the single field
+the UI renders — the fully assembled text), `highlights[]` (the model-generated
+`{text, evidenceIds}` paragraph(s), kept for audit traceability), `groundingReport`,
+`removedParagraphs` (paragraphs the grounding degrade path dropped, replaced with a
+deterministic fallback sentence in `body`), `promptVersion`, `modelId`, `createdAt`.
+
+`subject` and the greeting/closing/sign-off frame of `body` are never model output — they're
+assembled from `applications.jobTitle`/`company` and the candidate's own stated name
+(profile-service), so the two facts most load-bearing for "is this the right email" can never
+be hallucinated. Only the highlight paragraph(s) are generated, and only after passing the
+same grounding check every other generated statement in this product passes.
+
+**`cover_letter_versions`** *(ADR-020)* — immutable, one per generation, versioned per
+application, mirroring `resume_versions`/`emails`: `applicationId`, `userId`,
+`jobDescriptionId`, `jobTitle`, `company` (both denormalised from the confirmed JD analysis
+at generation time, not from `applications.jobTitle`/`company`, since the analysis is the
+fresher source), `version`, `content` (the validated JSON —
+`greeting`/`openingParagraph`/`bodyParagraphs[]`/`closingParagraph`/`signOff`; only
+`greeting`/`signOff` are ungrounded boilerplate, everything else carries `{text,
+evidenceIds}`), `groundingReport`, `removedParagraphs` (paragraphs the grounding degrade path
+dropped entirely — unlike email, a letter paragraph has no safe deterministic fallback to
+substitute), `promptVersion`, `modelId`, `createdAt`.
+
+Unlike `emails`, every paragraph here is model-generated and grounded — there is no
+deterministic assembly step, because a letter has no fixed subject-line-equivalent fact to
+protect the same way email's subject does; the job title and company are instead added to
+`GroundingValidator`'s allowed-context set (ADR-020) so they can be named honestly without a
+citation, while every other claim in the letter is checked exactly like a resume bullet.
 
 ---
 
@@ -294,16 +390,22 @@ Created explicitly at startup by each service's index initialiser.
 | resume | `resume_generations` | `idempotencyKey` | unique, sparse | safe redelivery |
 | resume | `resume_versions` | `resumeGenerationId + version` | unique | version retrieval |
 | resume | `resume_versions` | `userId + createdAt` | compound, desc | recent versions |
-| resume | `templates` | `templateId` | unique | catalogue lookup |
+| resume | `templates` | `templateId` | unique | catalogue lookup (the Mongo `_id`, unique by construction) |
+| resume | `templates` | `type + status` | compound | active-catalogue listing |
+| resume | `templates` | `source + ownerUserId` | compound | future custom-upload ownership lookup |
 | assessment | `ats_assessments` | `resumeVersionId` | unique | one ATS score per version |
 | assessment | `jd_fit_assessments` | `resumeVersionId + jdVersionId` | unique | one fit score per pair |
 | assessment | `recommendations` | `resumeVersionId` | — | fetch with the score |
-| document | `rendered_documents` | `userId + createdAt` | compound, desc | artifact listing |
+| document | `rendered_documents` | `userId + renderedAt` | compound, desc | artifact listing |
 | document | `rendered_documents` | `resumeVersionId + format` | unique | one artifact per format |
 | document | `rendered_documents` | `objectKey` | unique | storage integrity |
 | application | `applications` | `userId + createdAt` | compound, desc | history |
 | application | `applications` | `userId + status` | compound | status board |
 | application | `application_status_history` | `applicationId + changedAt` | compound | timeline |
+| application | `emails` | `applicationId + version` | compound, desc | latest version lookup |
+| application | `emails` | `userId + createdAt` | compound, desc | listing |
+| application | `cover_letter_versions` | `applicationId + version` | compound, desc | latest version lookup |
+| application | `cover_letter_versions` | `userId + createdAt` | compound, desc | listing |
 
 Every user-scoped index leads with `userId`, so the index that serves the query is also the
 one that enforces tenant scoping.

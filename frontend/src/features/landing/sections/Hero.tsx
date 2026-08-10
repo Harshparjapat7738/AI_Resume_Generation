@@ -1,6 +1,8 @@
+import { Link } from 'react-router-dom';
 import { Reveal } from '../components/Reveal';
 import { ArrowRightIcon, CheckIcon, GaugeIcon, MailIcon, ShieldCheckIcon } from '../components/icons';
 import { atsChecks } from '../content';
+import { useSession } from '@/services/session';
 
 const trustChips = [
   { icon: GaugeIcon, label: '10 deterministic ATS checks' },
@@ -9,6 +11,8 @@ const trustChips = [
 ];
 
 export function Hero() {
+  const { data: user } = useSession();
+
   return (
     <section className="relative overflow-hidden pt-20 pb-24 sm:pt-28 sm:pb-32">
       <div aria-hidden="true" className="absolute inset-0 bg-forge-grid bg-forge-glow" />
@@ -17,7 +21,7 @@ export function Hero() {
           <Reveal>
             <span className="inline-flex items-center gap-2 rounded-full border border-border-strong bg-surface px-3 py-1 text-xs text-ink-muted">
               <span className="h-1.5 w-1.5 rounded-full bg-mint" />
-              Milestone 1 of 9 — platform foundation live
+              Evidence-grounded generation is live — try it free
             </span>
           </Reveal>
 
@@ -39,13 +43,13 @@ export function Hero() {
 
           <Reveal delay={0.24}>
             <div className="mt-9 flex flex-col gap-3 sm:flex-row sm:items-center">
-              <a
-                href="#workflow"
+              <Link
+                to="/generate"
                 className="group inline-flex items-center justify-center gap-2 rounded-full bg-linear-to-r from-ember-soft to-rose px-6 py-3 text-sm font-semibold text-void transition-transform hover:-translate-y-0.5"
               >
-                See how it works
+                {user ? 'Generate a resume' : 'Get started'}
                 <ArrowRightIcon className="h-4 w-4 transition-transform group-hover:translate-x-0.5" />
-              </a>
+              </Link>
               <a
                 href="#benefits"
                 className="inline-flex items-center justify-center gap-2 rounded-full border border-border-strong px-6 py-3 text-sm font-semibold text-ink transition-colors hover:border-ink-muted"

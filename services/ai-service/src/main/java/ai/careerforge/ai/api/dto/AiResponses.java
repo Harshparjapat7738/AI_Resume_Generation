@@ -41,6 +41,30 @@ public final class AiResponses {
     }
 
     /**
+     * @param content            validated cover-letter content
+     * @param grounding          the full verification report, stored with the version
+     * @param removedParagraphs  paragraphs dropped because they failed grounding twice; the
+     *                           caller surfaces the letter with those simply absent
+     */
+    public record CoverLetterContentResponse(JsonNode content, GroundingReport grounding,
+                                             java.util.List<String> removedParagraphs,
+                                             Provenance provenance) {
+    }
+
+    /**
+     * @param content           validated email content (greeting, one body paragraph, one
+     *                          closing paragraph, sign-off) — application-service assembles
+     *                          the final subject and body around this; see
+     *                          ARCHITECTURE_DECISIONS.md ADR-019
+     * @param grounding         the full verification report, stored with the email version
+     * @param removedParagraphs paragraphs dropped because they failed grounding twice
+     */
+    public record EmailContentResponse(JsonNode content, GroundingReport grounding,
+                                       java.util.List<String> removedParagraphs,
+                                       Provenance provenance) {
+    }
+
+    /**
      * Diagnostic payload. Deliberately reports whether a key is configured and what it
      * looks like in masked form — never the key itself.
      */

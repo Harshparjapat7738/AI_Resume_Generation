@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org" lang="en">
+<head>
+<meta charset="UTF-8"/>
+<title th:text="${resume.fullName()} + ' - Resume'">Resume</title>
+<style>
+  /* Classic — centered header, serif type, understated horizontal rules under each
+     section title. The traditional shape recruiters have seen for decades. */
+  @page { size: A4; margin: 22mm 20mm; }
+  * { box-sizing: border-box; }
+  body {
+    font-family: "Times New Roman", Times, serif;
+    font-size: 10.5pt;
+    line-height: 1.5;
+    color: #1a1a1a;
+    margin: 0;
+  }
+  .header { text-align: center; margin-bottom: 16pt; }
+  .name { font-size: 22pt; font-weight: bold; letter-spacing: 0.5pt; margin: 0 0 3pt 0; }
+  .headline { font-size: 11pt; font-style: italic; color: #333333; margin: 0 0 6pt 0; }
+  .contact { font-size: 9.5pt; color: #333333; }
+  .contact a { color: #333333; text-decoration: none; }
+  .contact span + span::before { content: "   •   "; color: #888888; }
+  .header-rule { border: none; border-top: 1.2pt solid #1a1a1a; margin-top: 10pt; }
+  section { margin-top: 13pt; }
+  h2 {
+    font-size: 12pt;
+    font-weight: bold;
+    text-align: left;
+    margin: 0 0 4pt 0;
+    border-bottom: 0.75pt solid #999999;
+    padding-bottom: 3pt;
+  }
+  .entry { margin-bottom: 9pt; page-break-inside: avoid; }
+  .entry-header { display: block; }
+  .entry-title { font-weight: bold; }
+  .entry-date { float: right; font-style: italic; font-size: 9.5pt; }
+  .entry-sub { font-style: italic; font-size: 9.5pt; margin-bottom: 3pt; }
+  ul { margin: 4pt 0 0 0; padding-left: 16pt; }
+  li { margin-bottom: 2.5pt; }
+  p.summary { margin: 0; text-align: justify; }
+  .skills-list span + span::before { content: " · "; }
+</style>
+</head>
+<body>
+  <div class="header">
+    <p class="name" th:text="${resume.fullName()}">Full Name</p>
+    <p class="headline" th:if="${resume.headline()}" th:text="${resume.headline()}">Headline</p>
+    <p class="contact">
+      <span th:if="${resume.email()}" th:text="${resume.email()}">email@example.com</span>
+      <span th:if="${resume.phone()}" th:text="${resume.phone()}">+1 555 000 0000</span>
+      <span th:each="link : ${resume.links()}"><a th:href="${link}" th:text="${link}">link</a></span>
+    </p>
+    <hr class="header-rule"/>
+  </div>
+
+  <section th:if="${resume.summary()}">
+    <h2>Summary</h2>
+    <p class="summary" th:text="${resume.summary()}">Summary text.</p>
+  </section>
+
+  <section th:if="${not #lists.isEmpty(resume.experience())}">
+    <h2>Experience</h2>
+    <div class="entry" th:each="exp : ${resume.experience()}">
+      <div class="entry-header">
+        <span class="entry-date" th:text="${exp.dateRange()}">Jan 2021 – Present</span>
+        <span class="entry-title" th:text="${exp.title()}">Job Title</span><span th:text="${exp.company() != null ? ', ' + exp.company() : ''}">, Company</span>
+      </div>
+      <div class="entry-sub" th:if="${exp.location()}" th:text="${exp.location()}">Location</div>
+      <ul>
+        <li th:each="bullet : ${exp.bullets()}" th:text="${bullet}">Bullet point.</li>
+      </ul>
+    </div>
+  </section>
+
+  <section th:if="${not #lists.isEmpty(resume.education())}">
+    <h2>Education</h2>
+    <div class="entry" th:each="edu : ${resume.education()}">
+      <div class="entry-header">
+        <span class="entry-date" th:text="${edu.dateRange()}">2015 – 2019</span>
+        <span class="entry-title" th:text="${edu.degree()}">Degree</span><span th:text="${edu.institution() != null ? ', ' + edu.institution() : ''}">, Institution</span>
+      </div>
+      <div class="entry-sub" th:if="${edu.field()}" th:text="${edu.field()}">Field of study</div>
+      <p th:if="${edu.description()}" th:text="${edu.description()}">Description</p>
+    </div>
+  </section>
+
+  <section th:if="${not #lists.isEmpty(resume.skills())}">
+    <h2>Skills</h2>
+    <p class="skills-list">
+      <span th:each="skill : ${resume.skills()}" th:text="${skill}">Skill</span>
+    </p>
+  </section>
+
+  <section th:if="${not #lists.isEmpty(resume.projects())}">
+    <h2>Projects</h2>
+    <div class="entry" th:each="proj : ${resume.projects()}">
+      <div class="entry-header">
+        <span class="entry-date" th:text="${proj.dateRange()}"></span>
+        <span class="entry-title" th:text="${proj.name()}">Project Name</span>
+      </div>
+      <p th:if="${proj.description()}" th:text="${proj.description()}">Description</p>
+      <p class="entry-sub" th:if="${not #lists.isEmpty(proj.technologies())}" th:text="${#strings.listJoin(proj.technologies(), ', ')}">Technologies</p>
+    </div>
+  </section>
+
+  <section th:if="${not #lists.isEmpty(resume.certifications())}">
+    <h2>Certifications</h2>
+    <div class="entry" th:each="cert : ${resume.certifications()}">
+      <div class="entry-header">
+        <span class="entry-date" th:text="${cert.issuedOn()}"></span>
+        <span class="entry-title" th:text="${cert.name()}">Certification</span><span th:text="${cert.issuer() != null ? ', ' + cert.issuer() : ''}">, Issuer</span>
+      </div>
+    </div>
+  </section>
+
+  <section th:if="${not #lists.isEmpty(resume.achievements())}">
+    <h2>Achievements</h2>
+    <div class="entry" th:each="ach : ${resume.achievements()}">
+      <div class="entry-header">
+        <span class="entry-date" th:text="${ach.date()}"></span>
+        <span class="entry-title" th:text="${ach.title()}">Achievement</span>
+      </div>
+      <p th:if="${ach.description()}" th:text="${ach.description()}">Description</p>
+    </div>
+  </section>
+</body>
+</html>

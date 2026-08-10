@@ -21,6 +21,22 @@ spring:
     multipart:
       max-file-size: ${MAX_UPLOAD_SIZE:5MB}
       max-request-size: ${MAX_UPLOAD_SIZE:5MB}
+  thymeleaf:
+    # Templates are Java string-built into openhtmltopdf input, never returned as MVC
+    # views — no controller here returns a view name — so caching is safe to enable
+    # everywhere except local development, where template edits should reload live.
+    cache: ${THYMELEAF_CACHE:true}
+    check-template: true
+    check-template-location: true
+
+careerforge:
+  storage:
+    endpoint: ${S3_ENDPOINT}
+    region: ${S3_REGION:us-east-1}
+    access-key: ${S3_ACCESS_KEY}
+    secret-key: ${S3_SECRET_KEY}
+    bucket: ${S3_BUCKET}
+    path-style-access: ${S3_PATH_STYLE_ACCESS:true}
 
 eureka:
   client:

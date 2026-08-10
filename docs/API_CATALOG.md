@@ -3,8 +3,21 @@
 Every implemented endpoint, documented before it is considered done. Updated in the same
 pull request that adds, changes or removes an API.
 
-**Current state:** Milestone 1. Only platform endpoints are implemented. Business
-endpoints appear in §3 as a planned contract and move into §2 as they ship.
+**Current state:** a first vertical slice is implemented ahead of the milestone-by-milestone
+plan — `auth-service` (register/login/refresh/logout/me), `profile-service` (personal info,
+education, experience, skills, projects, certifications and achievements — all six
+evidence-bearing sections), `jd-service` (text intake, SSRF-guarded URL intake, confirm,
+analysis — see ADR-015), `resume-service` (synchronous generation + history, plus the
+built-in template catalogue — see ADR-013, ADR-016), `document-service` (real Resume PDF
+rendering against the selected built-in template — see ADR-018), `assessment-service` (ATS +
+JD-fit scoring, scoped to structured content rather than a rendered document — see ADR-014)
+and `application-service` (the central `Application` aggregate — create, attach a resume,
+list, get, status lifecycle and history, all by reference, see ADR-017 — plus grounded email
+generation, ADR-019, and grounded cover-letter generation, ADR-020) are real. Everything else
+in §3 remains a planned contract, moving into §2 as it ships. OAuth, JD file intake, resume
+version history, custom-upload and online templates, profile versions/import, combined
+(`ALL`) generation, Gmail-draft generation, DOCX rendering, and notification are not yet
+implemented.
 
 **Base URL** — everything public goes through the gateway: `http://localhost:8080`.
 Business services are not reachable from the host (ADR-007).
@@ -144,6 +157,539 @@ Milestone 9.
 
 ---
 
+### auth-service
+
+---
+
+**POST** `/api/auth/register` — Public
+
+Request: `{ "email": "a@b.com", "password": "at-least-8-chars", "displayName": "Ada Lovelace" }`
+
+Response `201`: `{ "userId": "...", "email": "a@b.com" }`
+
+**Status codes** `201` · `400 VALIDATION_ERROR` · `409 CONFLICT` (email already registered)
+
+---
+
+**POST** `/api/auth/login` — Public
+
+Request: `{ "email": "a@b.com", "password": "..." }`
+
+Response `200`: `{ "accessToken": "<jwt>", "expiresIn": 900 }` and a `Set-Cookie: refreshToken=…`
+(HttpOnly, `Path=/api/auth`, `SameSite=Lax`; `Secure` when `REFRESH_COOKIE_SECURE=true`).
+
+**Status codes** `200` · `400 VALIDATION_ERROR` (wrong email/password — deliberately not
+`401`, to avoid confirming an account exists)
+
+---
+
+**POST** `/api/auth/refresh` — Refresh cookie (no bearer token)
+
+Reads the `refreshToken` cookie, rotates it (old token revoked, successor issued in the same
+family), and returns a new access token in the same shape as login. Presenting an
+already-rotated token revokes the whole family and returns `401`.
+
+**Status codes** `200` · `401` (missing/invalid/reused token)
+
+---
+
+**POST** `/api/auth/logout` — Bearer
+
+Revokes the refresh-token family tied to the presented cookie and clears it. `204` even if
+no cookie was present.
+
+**GET** `/api/auth/me` — Bearer
+
+Response `200`: `{ "userId": "...", "email": "...", "displayName": "...", "roles": ["ROLE_USER"] }`
+
+---
+
+### profile-service
+
+Personal information, education, experience, skills, projects, certifications and
+achievements are all implemented — every section follows the same shape and evidence-id
+pattern. Profile versions and resume import remain in §3.
+
+---
+
+**GET** `/api/profile` — Bearer. Creates an empty profile on first access. Returns
+`{ personalInformation, education[], experiences[], skills[], projects[], certifications[], achievements[] }`.
+
+**PUT** `/api/profile` — Bearer. Body: `{ fullName, headline?, email?, phone?, links[] }`.
+
+Each of the six sections below follows the identical `POST /{section}` (create, assigns and
+returns a stable `evidenceId`) / `PUT /{section}/{evidenceId}` (update; id is immutable,
+`404` if not owned) / `DELETE /{section}/{evidenceId}` shape:
+
+| Section | Path | Evidence prefix | Body fields |
+|---|---|---|---|
+| Experience | `/api/profile/experience[/{id}]` | `EXP` | `company, title, employmentType?, start?, end?, current, location?, bullets[], technologies[], metrics[]` |
+| Education | `/api/profile/education[/{id}]` | `EDU` | `institution, degree, field?, start?, end?, grade?, description?` |
+| Skills | `/api/profile/skills[/{id}]` | `SKILL` | `name, category?, proficiency?, yearsOfExperience?` — `category` is free text, not an enum |
+| Projects | `/api/profile/projects[/{id}]` | `PROJ` | `name, description?, role?, technologies[], metrics[], githubUrl?, liveUrl?, start?, end?` |
+| Certifications | `/api/profile/certifications[/{id}]` | `CERT` | `name, issuer, issuedOn?, expiresOn?, credentialId?, credentialUrl?` |
+| Achievements | `/api/profile/achievements[/{id}]` | `ACH` | `title, description?, date?` |
+
+All six return the full `ProfileResponse` (every section), same as `PUT /api/profile`.
+
+**GET** `/api/profile/evidence` — Bearer. Returns the ID-labelled inventory ai-service
+consumes, combined across **all six sections** (not just experience):
+`[{ evidenceId, type, title, organisation, description, technologies[], metrics[], startDate, endDate }]`.
+`type` is one of `EXPERIENCE · EDUCATION · SKILL · PROJECT · CERTIFICATION · ACHIEVEMENT`.
+
+---
+
+### jd-service
+
+`sourceType = TEXT` and `URL` are both implemented — file upload remains in §3.
+
+---
+
+**POST** `/api/jd` — Bearer. Body: `{ "jobDescriptionText": "..." }` (50–60,000 chars).
+Response `201`: `{ id, status: "EXTRACTED", sourceType: "TEXT", title, company, createdAt }`.
+
+**POST** `/api/jd/fetch-url` — Bearer. Body: `{ "url": "https://…" }`. Fetches the URL
+server-side through the SSRF guard (`SsrfGuard` + `JdUrlFetcher` — scheme/port/private-IP
+validation, every redirect hop re-validated, `text/html`-only, 3 MB cap, 5s/10s timeouts —
+see ARCHITECTURE_DECISIONS.md ADR-015), extracts it (schema.org `JobPosting` JSON-LD when
+the page provides it, generic readable text otherwise), and stores it exactly like a pasted
+JD — same response shape (`201`, `sourceType: "URL"`), same confirm/analysis flow after.
+
+**Status codes** `201` · `400 VALIDATION_ERROR` (malformed request body) ·
+`400 JD_URL_BLOCKED` (scheme/port/private-network address rejected by the SSRF guard, or too
+many redirects) · `400 JD_VALIDATION_ERROR` (fetch failed, non-200, non-HTML content-type,
+oversized, or the extracted text is shorter than 50 characters) — the frontend shows the
+same "Unable to extract this job description from this URL" message for both `JD_URL_BLOCKED`
+and this case, since the distinction isn't actionable for the user.
+
+**GET** `/api/jd/{id}` — Bearer. Adds `rawText`, `currentVersion`, `sourceUrl`, and —
+only ever non-null for a `URL`-sourced JD whose page had `JobPosting` JSON-LD —
+`location`, `skillsSummary`, `experienceSummary`. `404` if not owned.
+
+**POST** `/api/jd/{id}/confirm` — Bearer. Idempotent; sets `status = CONFIRMED`.
+
+**GET** `/api/jd/{id}/analysis` — Bearer. `409 JD_NOT_CONFIRMED` unless confirmed. On first
+call, calls `ai-service` (`POST /internal/ai/jd-analysis`) and caches the result on the JD
+version; subsequent calls return the cached analysis. Response:
+`{ jobDescriptionId, title, company, seniority, keywords[], requirements[] }`.
+
+**GET** `/api/jd` — Bearer. `?page&size` (defaults 0/20, size capped at 100). Returns
+`{ content[], page, size, totalElements, totalPages }`.
+
+---
+
+### resume-service
+
+**Deviates from the async contract below — see ADR-013.**
+
+---
+
+**POST** `/api/resumes/generate` — Bearer. Body: `{ "jobDescriptionId": "...", "templateId": "..." }`.
+`templateId` is optional — omitted or blank resolves to the default built-in template
+(`classic`), so existing callers that don't select a template keep working unchanged.
+
+Orchestrates: resolve the template (`templates` catalogue — 404 if missing, disabled, or an
+uploaded template owned by someone else) → load the confirmed JD's analysis (`jd-service`)
+and the caller's evidence inventory (`profile-service`) → `ai-service` evidence-selection →
+`ai-service` resume-content → persist. The template is resolved **before** any AI call, so an
+invalid selection fails fast without spending a Groq request. Runs **synchronously**; returns
+the finished result directly instead of a `202` + job id.
+
+Response `200`:
+
+```json
+{
+  "id": "...",
+  "jobDescriptionId": "...",
+  "templateId": "classic",
+  "templateVersion": "1",
+  "content": { "summary": {...}, "experienceBullets": [...], "skillsOrdering": [...] },
+  "evidenceMatches": [{ "requirementId": "REQ-001", "evidenceIds": ["EXP-001"], "matchStrength": "STRONG", "reason": "..." }],
+  "gaps": [{ "requirementId": "REQ-005", "text": "...", "type": "EDUCATION" }],
+  "grounding": { "passed": true, "violations": [], "checkedStatements": 3 },
+  "removedSections": [],
+  "createdAt": "..."
+}
+```
+
+`gaps` lists every requirement no evidence could support (`matchStrength: NONE`) — reported,
+never fabricated. `removedSections` lists statements that failed grounding twice and were
+dropped.
+
+**Status codes** `200` · `400 VALIDATION_ERROR` (no evidence, no requirements, or nothing
+matched) · `404` (JD, or template, not owned/found/disabled) · `409 JD_NOT_CONFIRMED` ·
+`502 AI_GENERATION_FAILED`
+
+**GET** `/api/resumes/{id}` — Bearer. Returns the same shape from storage — this is what
+makes the result page refresh-safe. `404` if not owned.
+
+**GET** `/api/resumes` — Bearer. `?page&size` (defaults 0/20, size capped at 100), newest
+first. Powers the `/dashboard` history screen. Response:
+`{ content: [{ id, jobDescriptionId, jobTitle, company, templateId, createdAt }], page, size, totalElements, totalPages }`.
+`jobTitle`/`company` are denormalised onto `resume_versions` at generation time from the JD
+analysis, so listing history never has to cross-call jd-service per row.
+
+---
+
+**GET** `/api/resumes/templates?type=RESUME` — Bearer. Lists the active, selectable template
+catalogue (docs/DATABASE.md §3 "templates"; ADR-004, ADR-016). Only built-in templates exist
+today. Response:
+
+```json
+[{
+  "templateId": "classic",
+  "name": "Classic",
+  "description": "...",
+  "previewKey": "classic",
+  "type": "RESUME",
+  "version": "1",
+  "status": "ACTIVE",
+  "source": "BUILT_IN",
+  "supportedFormats": ["PDF", "DOCX"],
+  "atsSafe": true
+}]
+```
+
+**GET** `/api/resumes/templates/{id}` — Bearer. Single template; same shape as one array
+element above. `404` if missing, disabled, or (once uploads exist) owned by someone else.
+
+---
+
+### document-service
+
+**Real Resume PDF rendering only — see ARCHITECTURE_DECISIONS.md ADR-018.** Cover letters,
+DOCX, and the async render-job contract `docs/API_CATALOG.md` §3 originally sketched for this
+service are not implemented; rendering runs synchronously, the same deviation pattern
+resume-service already established (ADR-013). The selectable template *catalogue* lives in
+resume-service (`GET /api/resumes/templates`, ADR-004) — this service only owns the
+renderable HTML/CSS behind each of those same three ids and turns one into a PDF.
+
+---
+
+**POST** `/api/documents/resume-versions/{resumeVersionId}/render` — Bearer. Body:
+`{ "templateId": "..." }` (optional).
+
+Renders the resume version's structured content (grounded AI-written summary and experience
+bullets) merged with the caller's factual profile data (name, contact, dates, education,
+certifications, achievements — never AI-touched) into a PDF using the chosen template.
+Omitting `templateId` uses whichever template that resume version was actually generated
+with (`ResumeVersion.templateId`, ADR-016) — never a document-service-local default while
+that's available. Idempotent per `(resumeVersionId, format)`: re-rendering with the same
+template against unchanged content returns the already-stored artifact rather than
+re-uploading; a different template (or changed content) replaces it in place — one current
+PDF per resume version, not accumulating history.
+
+Response `200`:
+
+```json
+{
+  "id": "...",
+  "resumeVersionId": "...",
+  "format": "PDF",
+  "templateId": "modern-ats",
+  "templateVersion": "1",
+  "pageCount": 1,
+  "byteSize": 48213,
+  "sha256": "…",
+  "renderedAt": "..."
+}
+```
+
+**Status codes** `200` · `400 VALIDATION_ERROR` (unknown `templateId`) · `404` (resume
+version not owned) · `500 DOCUMENT_RENDER_FAILED` · `503 UPSTREAM_UNAVAILABLE`
+(resume-service or profile-service unreachable)
+
+---
+
+**GET** `/api/documents/resume-versions/{resumeVersionId}` — Bearer. Metadata for an
+already-rendered PDF (same shape as above), so the result page can offer a download without
+re-rendering on every visit. `404` if this resume version has never been rendered — including
+every resume version generated before this feature existed; the frontend shows "PDF
+unavailable for this older generation" rather than an error in that case, and offers to
+render one on demand instead (nothing about older history is broken).
+
+---
+
+**GET** `/api/documents/{id}/download` — Bearer. Streams the PDF bytes directly through this
+service (`Content-Type: application/pdf`, `Content-Disposition: attachment`). `404` if not
+owned.
+
+**Deviates from the presigned-URL contract `docs/API_CATALOG.md` §3 originally sketched.**
+MinIO/S3 is never reached directly from the browser — no storage endpoint, credential, or
+bucket detail is ever exposed to it, and the URL contains only an opaque Mongo id (the actual
+object key inside the bucket is a separate random UUID the client never sees). Simpler and at
+least as secure as a presigned URL, and avoids needing a browser-reachable S3 endpoint
+distinct from the internal Docker-network one MinIO is actually configured with.
+
+---
+
+### assessment-service
+
+**Scope deviation from `docs/DATABASE.md` §3 — see ARCHITECTURE_DECISIONS.md ADR-014.** The
+ATS checks score the resume's structured content, not a rendered PDF/DOCX (no
+document-service exists to produce one yet). The JD-fit compatibility formula matches the
+documented blueprint exactly.
+
+---
+
+**POST** `/api/assessment/resume-versions/{resumeVersionId}` — Bearer
+
+Computes ATS + JD-fit scoring for an already-generated resume version. Idempotent — the
+first call computes and persists; every subsequent call (including a second `POST`) returns
+the cached result. Internally fetches the resume (`resume-service`), its JD analysis
+(`jd-service`) and the caller's profile (`profile-service`) via Eureka, not the gateway.
+
+Response `200`:
+
+```json
+{
+  "resumeVersionId": "...",
+  "atsScore": 76.4,
+  "atsChecks": [
+    { "checkId": "CONTACT_INFO_PRESENT", "label": "Contact information", "weight": 15.0,
+      "passRatio": 1.0, "detail": "Name and contact details are present.", "earned": 15.0 }
+  ],
+  "engineVersion": "content-v1",
+  "compatibilityScore": 0.57,
+  "coverage": 0.67,
+  "keywordMatch": 0.43,
+  "seniorityMatch": 0.57,
+  "recency": 0.4,
+  "requirementMatches": [
+    { "requirementId": "REQ-001", "text": "...", "type": "HARD_REQUIRED",
+      "matchStrength": "STRONG", "evidenceIds": ["EXP-001"] }
+  ],
+  "unmetHardRequirements": [],
+  "matchedKeywords": ["Java", "Spring Boot"],
+  "missingKeywords": ["PostgreSQL", "AWS"],
+  "readinessBand": "STRETCH",
+  "bandRule": "compatibilityScore >= 0.40",
+  "recommendations": [
+    { "type": "KEYWORD", "severity": "MEDIUM",
+      "message": "Consider highlighting genuine experience with: PostgreSQL, AWS — only if you actually have it.",
+      "relatedRequirementId": null }
+  ],
+  "assessedAt": "..."
+}
+```
+
+The seven ATS checks (weights sum to 100): `CONTACT_INFO_PRESENT` (15), `SUMMARY_PRESENT`
+(10), `EXPERIENCE_SECTION_PRESENT` (15), `DATE_CONSISTENCY` (15),
+`BULLET_LENGTH_SUITABILITY` (15), `KEYWORD_PRESENCE` (15), `GROUNDING_INTEGRITY` (15) —
+the last one reuses the grounding report `ai-service` already computed during generation.
+
+`compatibilityScore = 0.50·coverage + 0.20·keywordMatch + 0.20·seniorityMatch + 0.10·recency`.
+`readinessBand` is `STRONG` (≥0.85 and no unmet hard requirements) · `COMPETITIVE` (≥0.65) ·
+`STRETCH` (≥0.40) · `WEAK_FIT` (below). `recommendations` never instructs adding a skill or
+experience the candidate doesn't have — every message is qualified ("only if you actually
+have it") or reports a gap.
+
+**Status codes** `200` · `404` (resume not owned) · `409 JD_NOT_CONFIRMED` (shouldn't occur —
+generation itself requires confirmation) · `503 UPSTREAM_UNAVAILABLE`
+
+---
+
+**GET** `/api/assessment/resume-versions/{resumeVersionId}` — Bearer. Same response shape.
+`404` if no assessment has been computed yet (the frontend offers a "Run ATS analysis"
+button in that case rather than auto-triggering it silently).
+
+---
+
+### application-service
+
+**The central `Application` aggregate — see ARCHITECTURE_DECISIONS.md ADR-017.** Stores
+references only (job, generation type, template, resume, cover letter, email, assessment),
+never a copy of what another service owns. `RESUME_ONLY`, `EMAIL_ONLY` (ADR-019) and
+`COVER_LETTER_ONLY` (ADR-020) all reach `COMPLETED` today. `ALL` remains a valid, storable
+value with no combined pipeline behind it yet, since it needs every artifact type to exist
+together (see Milestone 8 below for what else remains unimplemented in this milestone).
+
+---
+
+**POST** `/api/applications` — Bearer
+
+```json
+{
+  "jobDescriptionId": "...",
+  "generationType": "RESUME_ONLY",
+  "templateId": "modern-ats",
+  "resumeVersionId": "..."
+}
+```
+
+`generationType` is required; `templateId` and `resumeVersionId` are optional. Verifies
+`jobDescriptionId` (jd-service), `templateId` if supplied (resume-service's template
+catalogue, ADR-016) and `resumeVersionId` if supplied (resume-service, and it must belong to
+the same `jobDescriptionId`) before saving. `status` is always derived, never accepted from
+the caller — see the response shape below.
+
+Response `201`:
+
+```json
+{
+  "id": "...",
+  "jobDescriptionId": "...",
+  "jobTitle": "Backend Engineer",
+  "company": "Acme",
+  "generationType": "RESUME_ONLY",
+  "templateId": "modern-ats",
+  "resumeVersionId": "...",
+  "coverLetterVersionId": null,
+  "emailId": null,
+  "assessed": true,
+  "status": "COMPLETED",
+  "failureCode": null,
+  "createdAt": "...",
+  "updatedAt": "..."
+}
+```
+
+`status` is derived per `generationType` (`Application.deriveStatus()`): `DRAFT` until that
+type's required artifact exists, `COMPLETED` once it does (`RESUME_ONLY` → resume,
+`EMAIL_ONLY` → email, `COVER_LETTER_ONLY` → cover letter), or `PROCESSING` for `ALL` even with
+some artifacts attached, since no pipeline produces all three together yet. `assessed` is
+best-effort — a missing assessment never blocks creating or completing the application, the
+same way the frontend's own assessment call is non-fatal.
+
+**Status codes** `201` · `400 VALIDATION_ERROR` (resume belongs to a different JD) ·
+`404` (JD, template or resume not owned) · `503 UPSTREAM_UNAVAILABLE`
+
+---
+
+**POST** `/api/applications/{id}/resume` — Bearer. `{ "resumeVersionId": "..." }`. Attaches or
+replaces the resume reference on an existing application and recomputes `status`. Same checks
+and error codes as the `resumeVersionId` path of `POST /api/applications`.
+
+---
+
+**GET** `/api/applications/{id}` — Bearer. Full detail, same shape as the `POST` response.
+`404` if not owned.
+
+---
+
+**GET** `/api/applications` — Bearer. Paged history for the dashboard.
+`?status=DRAFT|PROCESSING|COMPLETED|FAILED` filters; `?page=&size=` (`size` capped at 100).
+Rows omit `content` — id, `jobTitle`, `company`, `generationType`, `status`, `createdAt` only.
+
+---
+
+**PATCH** `/api/applications/{id}/status` — Bearer. `{ "status": "FAILED", "note": "..." }`.
+Enforces a legal-transition table (`DRAFT`/`FAILED → PROCESSING`,
+`PROCESSING → COMPLETED`/`FAILED`, `FAILED → DRAFT`) and appends a row to
+`application_status_history`; `COMPLETED` is terminal. `note` becomes `failureCode` when
+transitioning to `FAILED`.
+
+**Status codes** `200` · `404` (not owned) · `409 CONFLICT` (illegal transition, e.g. any move
+out of `COMPLETED`)
+
+---
+
+**GET** `/api/applications/{id}/status-history` — Bearer. Full transition timeline, newest
+first: `[{ "fromStatus", "toStatus", "note", "changedAt" }]`.
+
+---
+
+**POST** `/api/applications/{id}/email` — Bearer. See ARCHITECTURE_DECISIONS.md ADR-019.
+
+No request body — every input is already on the `Application` (job title, company) or fetched
+from profile-service (evidence, candidate name). Requires `generationType = EMAIL_ONLY` and a
+confirmed job title on the application. Calling this again **regenerates**: a new version is
+persisted and `Application.emailId` repoints at it, the same "call generate again" pattern
+`POST /api/resumes/generate` uses.
+
+Response `200`:
+
+```json
+{
+  "id": "...",
+  "applicationId": "...",
+  "subject": "Application for Backend Engineer at Acme - Jane Doe",
+  "body": "Dear Hiring Manager,\n\nI am writing to express my interest in the Backend Engineer role at Acme. I have led backend systems handling significant production traffic.\n\nMy resume is attached for your review, and I would welcome the opportunity to discuss this role further.\n\nSincerely,\nJane Doe",
+  "highlights": [
+    { "text": "I have led backend systems handling significant production traffic.", "evidenceIds": ["EXP-004"] }
+  ],
+  "grounding": { "passed": true, "violations": [], "checkedStatements": 2 },
+  "removedParagraphs": [],
+  "version": 1,
+  "createdAt": "..."
+}
+```
+
+`subject` and the greeting/closing/sign-off frame of `body` are assembled deterministically —
+never generated — from the application's own verified `jobTitle`/`company` and the candidate's
+real name; only the sentence(s) inside `body` that came from `highlights` are model-written,
+and only after passing the same grounding check as every other generated statement in this
+product. A paragraph the grounding degrade path removes is listed in `removedParagraphs` and
+replaced in `body` with one deterministic, trusted fallback sentence — the email is never left
+with a gap.
+
+**Status codes** `200` · `400 VALIDATION_ERROR` (wrong `generationType`, no confirmed job
+title, or no evidence in the profile yet) · `404` (not owned) · `502 AI_GENERATION_FAILED`
+
+---
+
+**GET** `/api/applications/{id}/email` — Bearer. Same response shape as the `POST` above —
+the latest version. `404` if no email has been generated for this application yet.
+
+---
+
+**POST** `/api/applications/{id}/cover-letter` — Bearer. See ARCHITECTURE_DECISIONS.md
+ADR-020.
+
+No request body. Requires `generationType = COVER_LETTER_ONLY`, the job description
+confirmed and analysed (reuses `JD_NOT_CONFIRMED` if not), and at least one evidence item on
+the profile. Runs the same two-stage pipeline resume-service uses (evidence selection, then
+content) against ai-service, orchestrated from application-service. Calling this again
+**regenerates**: a new version is persisted and `Application.coverLetterVersionId` repoints
+at it, the same "call generate again" pattern `POST /api/resumes/generate` and
+`POST .../email` both use.
+
+Response `200`:
+
+```json
+{
+  "id": "...",
+  "applicationId": "...",
+  "jobDescriptionId": "...",
+  "jobTitle": "Backend Engineer",
+  "company": "Acme",
+  "version": 1,
+  "content": {
+    "greeting": "Dear Hiring Manager,",
+    "openingParagraph": { "text": "I am excited to apply for the Backend Engineer role at Acme...", "evidenceIds": ["EXP-004"] },
+    "bodyParagraphs": [
+      { "text": "With experience building order-processing services in Java and Spring Boot...", "evidenceIds": ["EXP-004"] }
+    ],
+    "closingParagraph": { "text": "I look forward to the opportunity to discuss my application...", "evidenceIds": ["EXP-004"] },
+    "signOff": "Sincerely,"
+  },
+  "grounding": { "passed": true, "violations": [], "checkedStatements": 3 },
+  "removedParagraphs": [],
+  "createdAt": "..."
+}
+```
+
+`greeting`/`signOff` are plain strings, never grounding-checked (boilerplate, not a factual
+claim). `openingParagraph`/each entry of `bodyParagraphs`/`closingParagraph` are each checked
+the same way a resume bullet is — every statement must cite the evidence it draws on, and the
+target job title/company may be named without a citation (`GroundingValidator`'s 3-arg
+overload, ADR-020) since they're real, user-confirmed facts, not evidence. A paragraph that
+fails grounding twice is dropped entirely (listed in `removedParagraphs`) rather than shown
+unverified — unlike email's deterministic-fallback approach, since a cover letter has no safe
+generic sentence to fall back to for an arbitrary paragraph.
+
+**Status codes** `200` · `400 VALIDATION_ERROR` (wrong `generationType`, no evidence, or no
+extracted requirements) · `404` (not owned) · `409 JD_NOT_CONFIRMED` · `502
+AI_GENERATION_FAILED`
+
+---
+
+**GET** `/api/applications/{id}/cover-letter` — Bearer. Same response shape as the `POST`
+above — the latest version. `404` if no cover letter has been generated for this application
+yet.
+
+---
+
 ## 3. Planned endpoints
 
 Contract agreed; implemented in the milestone shown. Each moves to §2 with full request,
@@ -151,78 +697,72 @@ response, validation and error documentation when it ships.
 
 ### Milestone 2 — auth-service
 
+Register/login/refresh/logout/me are implemented — see §2. Still planned:
+
 | Method | Path | Auth | Purpose |
 |---|---|---|---|
-| POST | `/api/auth/register` | Public | Create an account. `409 CONFLICT` if the email exists. |
-| POST | `/api/auth/login` | Public | Authenticate. Returns access token; sets HttpOnly refresh cookie. |
-| POST | `/api/auth/refresh` | Refresh cookie | Rotate the refresh token, issue a new access token. Reuse of a rotated token revokes the family. |
-| POST | `/api/auth/logout` | Bearer | Revoke the current refresh family, clear the cookie. |
-| GET | `/api/auth/me` | Bearer | Current user summary. |
 | GET | `/api/auth/oauth2/authorize/google` | Public | Begin Authorization Code + PKCE. |
 | GET | `/api/auth/oauth2/callback/google` | Public | Exchange code, link or create account, issue tokens. |
 
 ### Milestone 3 — profile-service
 
+Personal info, education, experience, skills, projects, certifications and achievements are
+all implemented — see §2. Still planned:
+
 | Method | Path | Auth | Purpose |
 |---|---|---|---|
-| GET / PUT | `/api/profile` | Bearer | Read / replace personal information and address. |
-| POST / PUT / DELETE | `/api/profile/experience[/{id}]` | Bearer | Manage experience; each item gets a stable `evidenceId`. |
-| POST / PUT / DELETE | `/api/profile/education[/{id}]` | Bearer | Manage education. |
-| POST / PUT / DELETE | `/api/profile/skills[/{id}]` | Bearer | Manage skills. |
-| POST / PUT / DELETE | `/api/profile/certifications[/{id}]` | Bearer | Manage certifications. |
-| POST / PUT / DELETE | `/api/profile/projects[/{id}]` | Bearer | Manage projects. |
-| GET | `/api/profile/evidence` | Bearer | The ID-labelled inventory consumed by ai-service. |
-| GET | `/api/profile/versions` | Bearer | Profile version history. |
+| GET | `/api/profile/versions` | Bearer | Profile version history (immutable snapshots). |
 | POST | `/api/profile/import` | Bearer | Import an existing resume; returns parsed items for review — nothing is saved unconfirmed. |
 
 ### Milestone 4 — jd-service
 
+Text intake, URL intake, confirm and analysis are implemented — see §2. Still planned:
+
 | Method | Path | Auth | Purpose |
 |---|---|---|---|
-| POST | `/api/jd` | Bearer | Submit JD text. |
 | POST | `/api/jd/upload` | Bearer | Submit a PDF/DOCX/TXT file (multipart, ≤5 MB). |
-| POST | `/api/jd/fetch-url` | Bearer | Fetch a JD by URL through the SSRF guard. |
-| GET | `/api/jd/{id}` | Bearer | Retrieve the JD and its extracted text for review. |
-| POST | `/api/jd/{id}/confirm` | Bearer | **Mandatory.** Confirm a specific version before any generation. |
-| GET | `/api/jd/{id}/analysis` | Bearer | Requirements, classifications and keywords. `409 JD_NOT_CONFIRMED` if not yet confirmed. |
-| GET | `/api/jd` | Bearer | Paged list of the caller's JDs. |
 
 ### Milestone 5 — resume-service
 
+Generation and read-back are implemented, synchronously (ADR-013) — see §2. Still planned:
+
 | Method | Path | Auth | Purpose |
 |---|---|---|---|
-| POST | `/api/resumes/generate` | Bearer | Start async generation from a confirmed JD + template. `202` with a job ID. |
-| GET | `/api/resumes/generations/{jobId}` | Bearer | Job status and failure code. |
-| GET | `/api/resumes/{id}` | Bearer | Latest version content plus its evidence map. |
+| GET | `/api/resumes/generations/{jobId}` | Bearer | Async job status and failure code, once generation moves to a queue. |
 | GET | `/api/resumes/{id}/versions` | Bearer | Version history. |
-| GET | `/api/resumes/templates` | Bearer | Template catalogue (M6). |
+
+Template catalogue (`GET /api/resumes/templates`, `GET /api/resumes/templates/{id}`) is
+implemented — see §2. Custom-upload and online template sources are not (ADR-016).
 
 ### Milestone 6 — document-service
 
+Real Resume PDF rendering (render, metadata read-back, authenticated download) is
+implemented — see §2 and ARCHITECTURE_DECISIONS.md ADR-018. Still planned:
+
 | Method | Path | Auth | Purpose |
 |---|---|---|---|
-| POST | `/api/documents/{resumeVersionId}/render` | Bearer | Render PDF and/or DOCX. `202`. |
-| GET | `/api/documents/{id}/preview` | Bearer | Preview payload or presigned preview URL. |
-| GET | `/api/documents/{id}/download` | Bearer | 300-second presigned URL. `404` if not owned. |
+| — | — | — | DOCX rendering (docx4j dependency is already present, unused). |
+| — | — | — | Cover-letter rendering, once application-service has content to render (Milestone 8). |
+| GET | `/api/documents/{id}/preview` | Bearer | A lighter preview payload distinct from the full download — today the frontend previews the same PDF bytes it downloads. |
 
 ### Milestone 7 — assessment-service
 
+Compute and read are implemented, scoped to structured content (ADR-014) — see §2. Still planned:
+
 | Method | Path | Auth | Purpose |
 |---|---|---|---|
-| POST | `/api/assessment/resume-versions/{resumeVersionId}` | Bearer | Compute ATS + JD compatibility (ADR-010). |
-| GET | `/api/assessment/resume-versions/{resumeVersionId}` | Bearer | Full explainable breakdown. |
-| GET | `/api/assessment/{resumeId}` | Bearer | Convenience read: latest version's assessment. |
+| GET | `/api/assessment/{resumeId}` | Bearer | Convenience read: latest version's assessment, without knowing the version id. |
 
 ### Milestone 8 — application-service
 
+The `Application` aggregate itself — create, attach a resume, list, get, status transitions
+and history — is implemented; see §2 and ARCHITECTURE_DECISIONS.md ADR-017. Email generation
+(`POST`/`GET /api/applications/{id}/email`) is implemented; see §2 and ADR-019. Cover-letter
+generation (`POST`/`GET /api/applications/{id}/cover-letter`) is implemented; see §2 and
+ADR-020. Still planned:
+
 | Method | Path | Auth | Purpose |
 |---|---|---|---|
-| POST | `/api/applications` | Bearer | Save an application version with JD, resume, scores and template. |
-| GET | `/api/applications` | Bearer | Paged history; filter by status. |
-| GET | `/api/applications/{id}` | Bearer | Full detail. |
-| PATCH | `/api/applications/{id}/status` | Bearer | Update status; appends to history. |
-| POST | `/api/applications/{id}/cover-letter` | Bearer | Generate a grounded cover letter. |
-| POST | `/api/applications/{id}/email` | Bearer | Generate subject, body and filenames. |
 | POST | `/api/applications/{id}/gmail-draft` | Bearer | Create a Gmail **draft**. Never sends. |
 
 ### Milestone 9 — privacy
@@ -246,7 +786,8 @@ requires a new ADR.
 | POST | `/internal/ai/jd-analysis` | ai-service | Semantic JD understanding | ✅ Implemented |
 | POST | `/internal/ai/evidence-selection` | ai-service | Stage 1: requirement → evidence IDs | ✅ Implemented |
 | POST | `/internal/ai/resume-content` | ai-service | Stage 2: grounded content generation | ✅ Implemented |
-| POST | `/internal/ai/cover-letter` | ai-service | Grounded cover-letter content | Milestone 8 |
+| POST | `/internal/ai/cover-letter` | ai-service | Grounded cover-letter content — see ADR-020 | ✅ Implemented |
+| POST | `/internal/ai/email-content` | ai-service | Grounded application-email highlight paragraph(s) — see ADR-019 | ✅ Implemented |
 | POST | `/internal/notifications/send` | notification-service | Queue a transactional email | Milestone 8 |
 
 ---
@@ -388,6 +929,20 @@ requirements. Unverified content is never returned.
 `grounding.violations[].rule` is one of `UNKNOWN_EVIDENCE_ID`, `MISSING_EVIDENCE_ID`,
 `INVENTED_METRIC`, `UNSUPPORTED_ENTITY`, `UNSUPPORTED_DATE`, `UNSUPPORTED_CONTACT`,
 `EXTERNAL_URL`, `HIDDEN_CHARACTERS`.
+
+**Status codes** `200` · `400 VALIDATION_ERROR` · `502 AI_GENERATION_FAILED`
+
+---
+
+**POST** `/internal/ai/cover-letter` — see ARCHITECTURE_DECISIONS.md ADR-020.
+
+Structurally the same failure policy and grounding-violation vocabulary as
+`/internal/ai/resume-content` above, called by application-service instead of resume-service.
+Request adds `jobTitle`, `company` (nullable — not every JD names one), `seniority` and
+`selectedEvidenceIds` to the stage-1 inputs. `jobTitle`/`company` are allowed to appear in the
+output without an evidence citation (`GroundingValidator`'s 3-arg overload) — every other rule
+is unchanged. Response shape is `{ content: { greeting, openingParagraph, bodyParagraphs[],
+closingParagraph, signOff }, grounding, removedParagraphs, provenance }`.
 
 **Status codes** `200` · `400 VALIDATION_ERROR` · `502 AI_GENERATION_FAILED`
 

@@ -106,6 +106,27 @@ public class GroundingValidator {
      */
     public GroundingReport validate(List<GeneratedStatement> statements,
                                     Collection<EvidenceItem> inventory) {
+        return validate(statements, inventory, Set.of());
+    }
+
+    /**
+     * Same as {@link #validate(List, Collection)}, plus a set of extra phrases that are
+     * allowed to appear as proper nouns without being flagged as unsupported entities.
+     *
+     * <p>Used by cover-letter generation: the target job title and company name are real —
+     * confirmed by the user from the job description — even though they don't come from the
+     * candidate's own evidence. Referencing "Acme Corp" in a letter addressed to Acme Corp is
+     * not a fabrication the way inventing a past employer is; it would be strange to
+     * <em>forbid</em> the model from naming the company it's writing to. Numbers, dates and
+     * every other rule still apply exactly as before — this only widens the proper-noun
+     * allowlist.
+     *
+     * @param additionalContext free-text phrases (not evidence ids) whose words are added to
+     *                          the allowed vocabulary, tokenised the same way evidence is
+     */
+    public GroundingReport validate(List<GeneratedStatement> statements,
+                                    Collection<EvidenceItem> inventory,
+                                    Set<String> additionalContext) {
 
         Map<String, EvidenceItem> byId = inventory.stream().collect(
                 Collectors.toMap(EvidenceItem::evidenceId, Function.identity(), (a, b) -> a));
@@ -114,6 +135,7 @@ public class GroundingValidator {
         // naming a technology the candidate genuinely lists elsewhere is a relevance
         // mistake, not a fabrication, and should not block the generation.
         Set<String> profileVocabulary = buildVocabulary(inventory);
+        profileVocabulary.addAll(tokenise(additionalContext));
 
         List<GroundingViolation> violations = new ArrayList<>();
 
@@ -213,27 +235,51 @@ public class GroundingValidator {
     }
 
     /**
-     * A number is supported when the same digits appear in the cited evidence. Formatting
-     * is ignored — evidence saying {@code "1500 users"} supports {@code "1,500 users"} —
-     * but the digits themselves must be present. This is what stops "improved performance"
-     * becoming "improved performance by 40%".
+     * A number is supported when the same digits appear, as one token, in the cited
+     * evidence. Formatting within a token is ignored — evidence saying {@code "1500 users"}
+     * supports {@code "1,500 users"} — but the comparison is per whitespace-delimited token,
+     * never across the whole evidence blob at once.
+     *
+     * <p>Per-token matters: evidence routinely has several unrelated numbers next to each
+     * other — a metric ("800ms"), then a date ("2021-03") a few words later. Digit-stripping
+     * the entire blob before comparing (as an earlier version of this method did) lets those
+     * numbers concatenate into a substring that coincidentally matches a fabricated one — for
+     * example "...300ms 2021-03 2024-01" contains "4" immediately followed by "0" purely by
+     * accident, which would have let an invented "40%" claim through. Checking token-by-token
+     * keeps the formatting-invariant match while closing that gap.
      */
     private boolean supportsNumber(String citedText, String number) {
         String digits = digitsOnly(number);
         if (digits.isEmpty()) {
             return true;
         }
-        return digitsOnly(citedText).contains(digits) || citedText.contains(normalise(number));
+        if (citedText.contains(normalise(number))) {
+            return true;
+        }
+        for (String token : citedText.split("\\s+")) {
+            if (digitsOnly(token).equals(digits)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private Set<String> buildVocabulary(Collection<EvidenceItem> inventory) {
+        return tokenise(inventory.stream().map(EvidenceItem::searchableText).toList());
+    }
+
+    /** Tokenises free text into the same word/sub-word vocabulary evidence is indexed by. */
+    private Set<String> tokenise(Collection<String> phrases) {
         Set<String> vocabulary = new HashSet<>();
-        for (EvidenceItem item : inventory) {
-            for (String token : normalise(item.searchableText()).split("[^a-z0-9.+#/-]+")) {
+        for (String phrase : phrases) {
+            if (phrase == null) {
+                continue;
+            }
+            for (String token : normalise(phrase).split("[^a-z0-9.+#/-]+")) {
                 if (!token.isBlank()) {
                     vocabulary.add(token);
-                    // Index sub-tokens too, so evidence containing "spring-boot" also
-                    // supports the words "Spring" and "Boot" written separately.
+                    // Index sub-tokens too, so "spring-boot" also supports the words
+                    // "Spring" and "Boot" written separately.
                     for (String part : token.split("[.+#/-]")) {
                         if (part.length() > 1) {
                             vocabulary.add(part);

@@ -11,6 +11,10 @@ import ai.careerforge.jd.domain.JdVersion;
 import ai.careerforge.jd.domain.JobDescription;
 import ai.careerforge.jd.domain.JobDescriptionStatus;
 import ai.careerforge.jd.domain.Requirement;
+import ai.careerforge.jd.fetch.JdUrlFetcher;
+import ai.careerforge.jd.fetch.JdUrlFetcher.FetchedPage;
+import ai.careerforge.jd.fetch.JobPostingExtractor;
+import ai.careerforge.jd.fetch.JobPostingExtractor.ExtractedJd;
 import ai.careerforge.jd.repository.JdAnalysisRepository;
 import ai.careerforge.jd.repository.JdVersionRepository;
 import ai.careerforge.jd.repository.JobDescriptionRepository;
@@ -25,21 +29,28 @@ public class JdService {
 
     private static final Pattern WHITESPACE = Pattern.compile("[ \\t\\x0B\\f\\r]+");
     private static final Pattern BLANK_LINES = Pattern.compile("\\n{3,}");
+    private static final int MIN_JD_LENGTH = 50;
+    private static final int MAX_JD_LENGTH = 60_000;
 
     private final JobDescriptionRepository jobDescriptions;
     private final JdVersionRepository jdVersions;
     private final JdAnalysisRepository jdAnalyses;
     private final AiServiceClient aiServiceClient;
     private final ObjectMapper objectMapper;
+    private final JdUrlFetcher urlFetcher;
+    private final JobPostingExtractor jobPostingExtractor;
 
     public JdService(JobDescriptionRepository jobDescriptions, JdVersionRepository jdVersions,
                      JdAnalysisRepository jdAnalyses, AiServiceClient aiServiceClient,
-                     ObjectMapper objectMapper) {
+                     ObjectMapper objectMapper, JdUrlFetcher urlFetcher,
+                     JobPostingExtractor jobPostingExtractor) {
         this.jobDescriptions = jobDescriptions;
         this.jdVersions = jdVersions;
         this.jdAnalyses = jdAnalyses;
         this.aiServiceClient = aiServiceClient;
         this.objectMapper = objectMapper;
+        this.urlFetcher = urlFetcher;
+        this.jobPostingExtractor = jobPostingExtractor;
     }
 
     public record Submission(JobDescription jobDescription, JdVersion version) {
@@ -51,6 +62,38 @@ public class JdService {
 
         String normalised = normalise(rawText);
         JdVersion version = new JdVersion(jd.id(), jd.currentVersion(), rawText, normalised, "TEXT_INPUT");
+        version = jdVersions.save(version);
+
+        return new Submission(jd, version);
+    }
+
+    /**
+     * Fetches a job posting URL through the SSRF guard, extracts it (structured JSON-LD if
+     * the page has it, readable text either way), and stores it exactly like a pasted JD —
+     * confirmation and analysis proceed identically regardless of source (see
+     * ARCHITECTURE_DECISIONS.md ADR-015).
+     */
+    public Submission fetchUrl(String userId, String rawUrl) {
+        FetchedPage page = urlFetcher.fetch(rawUrl);
+        ExtractedJd extracted = jobPostingExtractor.extract(page.html());
+
+        String rawText = extracted.rawText() == null ? "" : extracted.rawText();
+        if (rawText.length() < MIN_JD_LENGTH) {
+            throw new ApiException(ErrorCode.JD_VALIDATION_ERROR,
+                    "Unable to extract this job description from this URL.");
+        }
+        if (rawText.length() > MAX_JD_LENGTH) {
+            rawText = rawText.substring(0, MAX_JD_LENGTH);
+        }
+
+        JobDescription jd = new JobDescription(userId, "URL", page.finalUrl().toString());
+        jd.applyUrlExtractionPreview(
+                extracted.title(), extracted.company(), extracted.location(),
+                extracted.skillsSummary(), extracted.experienceSummary());
+        jd = jobDescriptions.save(jd);
+
+        String normalised = normalise(rawText);
+        JdVersion version = new JdVersion(jd.id(), jd.currentVersion(), rawText, normalised, extracted.extractionMethod());
         version = jdVersions.save(version);
 
         return new Submission(jd, version);

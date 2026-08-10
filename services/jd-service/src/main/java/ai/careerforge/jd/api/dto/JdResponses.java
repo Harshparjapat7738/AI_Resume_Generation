@@ -12,8 +12,14 @@ public final class JdResponses {
             String id, String status, String sourceType, String title, String company, Instant createdAt) {
     }
 
+    /**
+     * {@code location}/{@code skillsSummary}/{@code experienceSummary} are only ever
+     * non-null for a {@code sourceType = URL} job description whose page embedded
+     * schema.org {@code JobPosting} data (see ADR-015) — otherwise null, never guessed.
+     */
     public record JdDetailResponse(
-            String id, String status, String sourceType, String title, String company,
+            String id, String status, String sourceType, String sourceUrl,
+            String title, String company, String location, String skillsSummary, String experienceSummary,
             String rawText, int currentVersion, Instant createdAt) {
     }
 
