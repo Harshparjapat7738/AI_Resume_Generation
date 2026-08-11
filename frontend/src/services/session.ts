@@ -5,10 +5,22 @@
  * /results/:id page keep working without sending the user back to /login.
  */
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { setAccessToken } from './apiClient';
+import { queryClient } from '@/app/queryClient';
+import { setAccessToken, setHardAuthFailureHandler } from './apiClient';
 import { me, refresh, type MeResponse } from './authApi';
 
 export const SESSION_QUERY_KEY = ['session'] as const;
+
+// apiClient.ts has no react-query dependency of its own — it just calls this once it has
+// confirmed the refresh cookie itself is dead (not merely a stale access token), so the
+// cached session actually reflects that. Every currently-mounted ProtectedRoute reads this
+// same query and already redirects to /login the moment `user` becomes null; this is what
+// makes that redirect happen without polling, without a full reload, and only when
+// re-authentication is genuinely required — a mid-flow access-token expiry alone never
+// reaches this, apiClient.ts silently refreshes and retries that case instead.
+setHardAuthFailureHandler(() => {
+  queryClient.setQueryData(SESSION_QUERY_KEY, null);
+});
 
 export async function bootstrapSession(): Promise<MeResponse | null> {
   try {

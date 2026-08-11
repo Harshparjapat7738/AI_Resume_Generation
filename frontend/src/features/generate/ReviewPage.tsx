@@ -15,6 +15,10 @@ export function ReviewPage() {
   const generationType = searchParams.get('type') ?? 'RESUME_ONLY';
   const isEmailOnly = generationType === 'EMAIL_ONLY';
   const isCoverLetterOnly = generationType === 'COVER_LETTER_ONLY';
+  // Only relevant for the "Choose a template" branch below — see JobDescriptionPage's own
+  // comment on why this travels as a query param.
+  const preselectedTemplateId = searchParams.get('templateId');
+  const templateParam = preselectedTemplateId ? `&templateId=${preselectedTemplateId}` : '';
 
   const jdQuery = useQuery({ queryKey: ['jd', jdId], queryFn: () => getJd(jdId), enabled: Boolean(jdId) });
 
@@ -174,7 +178,9 @@ export function ReviewPage() {
                     Generate my cover letter
                   </Button>
                 ) : (
-                  <Button onClick={() => navigate(`/generate/template/${jdId}`)}>Choose a template</Button>
+                  <Button onClick={() => navigate(`/generate/template/${jdId}?type=${generationType}${templateParam}`)}>
+                    Choose a template
+                  </Button>
                 )}
               </div>
             </div>

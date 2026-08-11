@@ -8,6 +8,10 @@ import { apiFetch } from './apiClient';
 export type GenerationType = 'RESUME_ONLY' | 'COVER_LETTER_ONLY' | 'EMAIL_ONLY' | 'ALL';
 export type ApplicationStatus = 'DRAFT' | 'PROCESSING' | 'COMPLETED' | 'FAILED';
 
+/** One of the three outputs `GenerationType.ALL` ("Generate All") tracks independently — see
+ *  `Application.recordOutputFailure` (ARCHITECTURE_DECISIONS.md, "Generate All" ADR). */
+export type ApplicationOutput = 'resume' | 'coverLetter' | 'email';
+
 export interface Application {
   id: string;
   jobDescriptionId: string;
@@ -21,6 +25,12 @@ export interface Application {
   assessed: boolean;
   status: ApplicationStatus;
   failureCode: string | null;
+  /** Set (and independently retryable) when this specific output failed to generate —
+   *  cleared the moment that output's own generate call next succeeds. Distinct outputs
+   *  fail and recover independently: one being set never implies the others are. */
+  resumeError: string | null;
+  coverLetterError: string | null;
+  emailError: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -76,7 +86,17 @@ export interface ApplicationSummary {
   jobTitle: string | null;
   company: string | null;
   generationType: GenerationType;
+  templateId: string | null;
   status: ApplicationStatus;
+  /** Populated only for `ALL` rows today — null for the other generation types, which only
+   *  ever populate the one field relevant to them. Lets the dashboard render per-output
+   *  status without an extra request per row. */
+  resumeVersionId: string | null;
+  coverLetterVersionId: string | null;
+  emailId: string | null;
+  resumeError: string | null;
+  coverLetterError: string | null;
+  emailError: string | null;
   createdAt: string;
 }
 
@@ -102,6 +122,33 @@ export function createApplication(
 
 export function getApplication(id: string): Promise<Application> {
   return apiFetch<Application>(`/api/applications/${id}`);
+}
+
+/** Attaches (or replaces) the generated resume reference on an existing application — the
+ *  same reference-recording pattern `generateEmail`/`generateCoverLetter` use, except resume
+ *  *generation* itself stays with resume-service (unchanged, see resumeApi.ts); this only
+ *  records the resulting `resumeVersionId`, used by the "Generate All" flow. */
+export function attachResume(applicationId: string, resumeVersionId: string): Promise<Application> {
+  return apiFetch<Application>(`/api/applications/${applicationId}/resume`, {
+    method: 'POST',
+    body: JSON.stringify({ resumeVersionId }),
+  });
+}
+
+/** Records that one output of a "Generate All" application failed to generate, so the
+ *  failure — and its reason — survives a refresh exactly like a success does. Call this from
+ *  the `catch` of whichever call actually failed (resume-service's generate, or this
+ *  service's own `generateEmail`/`generateCoverLetter`); it never throws for a well-formed
+ *  request, so it's safe to call from a catch block without another try/catch around it. */
+export function recordOutputFailure(
+  applicationId: string,
+  output: ApplicationOutput,
+  reason: string,
+): Promise<Application> {
+  return apiFetch<Application>(`/api/applications/${applicationId}/outputs/${output}/failed`, {
+    method: 'POST',
+    body: JSON.stringify({ reason }),
+  });
 }
 
 /** Generates (first call) or regenerates (every subsequent call) the application email — a

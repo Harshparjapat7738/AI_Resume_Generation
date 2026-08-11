@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { selectMonth } from './helpers/formControls';
 
 /**
  * End-to-end coverage for COVER_LETTER_ONLY generation (application-service + ai-service;
@@ -27,24 +28,23 @@ async function loginFreshUserToCoverLetterReview(
   await page.waitForURL('**/onboarding');
 
   await page.fill('#fullName', 'Morgan Lee');
+  // "Save & continue" both saves and advances (PersonalInfoForm's afterSave callback) —
+  // there is no separate "Continue" button on this step.
   await page.getByRole('button', { name: 'Save & continue' }).click();
-  // "Save & continue" only saves — the wizard's own nav button (relabelled "Continue" once
-  // the section has data) is what actually advances the step.
-  await expect(page.getByRole('button', { name: 'Continue', exact: true })).toBeVisible();
-  await page.getByRole('button', { name: 'Continue', exact: true }).click(); // personal -> education
+  await expect(page.getByText('Education')).toBeVisible();
 
   // Education (skipped) -> Experience.
   await page.getByRole('button', { name: /Continue|Skip/ }).first().click();
 
   await page.fill('#company', 'Initech Systems');
   await page.fill('#title', 'Backend Engineer');
-  await page.fill('#start', '2021-03');
-  await page.fill('#end', '2024-01');
+  await selectMonth(page, 'Start', '2021-03');
+  await selectMonth(page, 'End', '2024-01');
   await page.fill('#bullets', 'Built order-processing services\nReduced latency by 60%');
   await page.fill('#technologies', 'Java, Spring Boot');
   await page.getByRole('button', { name: 'Add experience' }).click();
   await expect(page.getByText('EXP-001')).toBeVisible();
-  await page.getByRole('button', { name: 'Continue', exact: true }).click();
+  await page.getByRole('button', { name: 'Save & continue' }).click();
 
   // Skills, Projects, Certifications, Achievements, Review — skip the rest.
   for (let i = 0; i < 4; i++) {

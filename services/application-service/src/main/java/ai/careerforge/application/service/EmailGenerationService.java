@@ -64,7 +64,7 @@ public class EmailGenerationService {
      *  the same regenerate-by-calling-again pattern resume-service uses. */
     public EmailContent generate(String userId, String applicationId) {
         Application application = applicationService.requireOwned(userId, applicationId);
-        requireEmailOnly(application);
+        requireEmailGenerationAllowed(application);
         requireJobTitle(application);
 
         List<EvidenceItem> evidence = fetchEvidence();
@@ -118,8 +118,9 @@ public class EmailGenerationService {
 
     // ---------------------------------------------------------------- guards ----
 
-    private void requireEmailOnly(Application application) {
-        if (application.generationType() != GenerationType.EMAIL_ONLY) {
+    private void requireEmailGenerationAllowed(Application application) {
+        GenerationType type = application.generationType();
+        if (type != GenerationType.EMAIL_ONLY && type != GenerationType.ALL) {
             throw new ApiException(ErrorCode.VALIDATION_ERROR,
                     "This application's generation type does not include email generation.");
         }

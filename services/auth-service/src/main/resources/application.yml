@@ -17,6 +17,13 @@ spring:
       uri: ${MONGODB_URI}
       database: ${MONGODB_DB_AUTH}
       auto-index-creation: false   # indexes are created explicitly at startup; see docs/DATABASE.md
+    # Backs the Google OAuth state/PKCE-verifier store (ai.careerforge.auth.oauth) — the
+    # first real use of the Redis starter this service already carried; see
+    # application-nodocker.yml for why it was previously unused.
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:}
   servlet:
     multipart:
       max-file-size: ${MAX_UPLOAD_SIZE:5MB}
@@ -37,6 +44,16 @@ careerforge:
     # false for local/dev (plain HTTP). Set true via env in docker/production, where the
     # gateway and frontend are served over HTTPS.
     refresh-cookie-secure: ${REFRESH_COOKIE_SECURE:false}
+  oauth:
+    google:
+      # All blank by default — Google sign-in is optional (docs/EXTERNAL_APIS.md);
+      # email/password keeps working unchanged when these are unset.
+      client-id: ${GOOGLE_CLIENT_ID:}
+      client-secret: ${GOOGLE_CLIENT_SECRET:}
+      redirect-uri: ${GOOGLE_REDIRECT_URI:http://localhost:8080/api/auth/oauth2/callback/google}
+      # Where the browser lands after the callback sets the refresh cookie — the frontend's
+      # own session bootstrap (GET /api/auth/refresh on load) takes it from there.
+      frontend-base-url: ${FRONTEND_BASE_URL:http://localhost:5173}
 
 management:
   endpoints:

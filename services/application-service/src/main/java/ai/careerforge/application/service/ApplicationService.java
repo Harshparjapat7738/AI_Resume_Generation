@@ -125,6 +125,23 @@ public class ApplicationService {
         return applications.save(application);
     }
 
+    private static final Set<String> VALID_OUTPUTS = Set.of("resume", "coverLetter", "email");
+
+    /** Records why one output of an application's generation failed — see
+     *  {@link Application#recordOutputFailure}. Never changes {@link Application#status}: a
+     *  failed output stays independently visible and independently retryable, the other
+     *  outputs are unaffected, and {@code COMPLETED} still requires every output the
+     *  generation type needs. */
+    public Application recordOutputFailure(String userId, String id, String output, String reason) {
+        if (!VALID_OUTPUTS.contains(output)) {
+            throw new ApiException(ErrorCode.VALIDATION_ERROR,
+                    "Unknown output '" + output + "'. Must be one of: resume, coverLetter, email.");
+        }
+        Application application = requireOwned(userId, id);
+        application.recordOutputFailure(output, reason);
+        return applications.save(application);
+    }
+
     public Page<Application> list(String userId, ApplicationStatus status, Pageable pageable) {
         return status == null
                 ? applications.findByUserIdOrderByCreatedAtDesc(userId, pageable)

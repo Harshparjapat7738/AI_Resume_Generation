@@ -3,12 +3,16 @@ import { useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { z } from 'zod';
 import { Button } from '@/components/ui/Button';
-import { Card } from '@/components/ui/Card';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
+import { MonthField } from '@/components/ui/MonthField';
 import { TextArea } from '@/components/ui/TextArea';
 import { TextField } from '@/components/ui/TextField';
 import * as profileApi from '@/services/profileApi';
 import type { ProfileResponse } from '@/services/profileApi';
+import { EmptyState } from '@/components/ui/EmptyState';
+import { TrophyIcon } from '@/features/profile/components/icons';
+import { RecordCard } from '@/features/profile/components/RecordCard';
+import { SectionEditorToggle } from '@/features/profile/components/SectionEditorToggle';
 
 const schema = z.object({
   title: z.string().trim().min(1, 'Enter a title').max(200),
@@ -18,6 +22,8 @@ const schema = z.object({
 
 type FormValues = z.infer<typeof schema>;
 
+/** One card per achievement, collapsed behind "+ Add Achievement" when there's nothing (or
+ *  nothing being edited) to show — same pattern as EducationManager. */
 export function AchievementsManager({
   profile,
   onChanged,
@@ -26,25 +32,42 @@ export function AchievementsManager({
   onChanged: (profile: ProfileResponse) => void;
 }) {
   const [formError, setFormError] = useState<unknown>(null);
+  const [deleteError, setDeleteError] = useState<unknown>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [isAdding, setIsAdding] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
   const {
     register,
     handleSubmit,
     reset,
+    watch,
+    setValue,
     formState: { errors, isSubmitting },
   } = useForm<FormValues>({ resolver: zodResolver(schema) });
+
+  const dateValue = watch('date');
+
+  const startAdd = () => {
+    reset({ title: '', description: '', date: '' });
+    setEditingId(null);
+    setDeleteError(null);
+    setIsAdding(true);
+  };
 
   const startEdit = (evidenceId: string) => {
     const item = profile.achievements.find((a) => a.evidenceId === evidenceId);
     if (!item) return;
     setEditingId(evidenceId);
+    setDeleteError(null);
+    setIsAdding(true);
     reset({ title: item.title ?? '', description: item.description ?? '', date: item.date ?? '' });
   };
 
   const cancelEdit = () => {
     setEditingId(null);
+    setIsAdding(false);
+    setFormError(null);
     reset({ title: '', description: '', date: '' });
   };
 
@@ -63,69 +86,94 @@ export function AchievementsManager({
 
   const handleDelete = async (evidenceId: string) => {
     setDeletingId(evidenceId);
+    setDeleteError(null);
     try {
-      onChanged(await profileApi.deleteAchievement(evidenceId));
+      const updated = await profileApi.deleteAchievement(evidenceId);
+      onChanged(updated);
       if (editingId === evidenceId) cancelEdit();
+    } catch (error) {
+      setDeleteError(error);
     } finally {
       setDeletingId(null);
     }
   };
 
-  return (
-    <div className="space-y-6">
-      <div className="space-y-4">
-        {profile.achievements.length === 0 && (
-          <p className="text-sm text-ink-faint">No achievements added yet — awards, competitions, publications, leadership.</p>
-        )}
-        {profile.achievements.map((item) => (
-          <Card key={item.evidenceId} className="!p-5">
-            <div className="flex items-start justify-between gap-4">
-              <div>
-                <p className="text-sm font-medium text-ink">{item.title}</p>
-                <p className="mt-0.5 text-xs text-ink-faint">
-                  {item.date} · {item.evidenceId}
-                </p>
-                {item.description && <p className="mt-2 text-sm text-ink-muted">{item.description}</p>}
-              </div>
-              <div className="flex shrink-0 gap-3 text-xs">
-                <button type="button" onClick={() => startEdit(item.evidenceId)} className="text-ink-faint hover:text-ink">
-                  Edit
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleDelete(item.evidenceId)}
-                  disabled={deletingId === item.evidenceId}
-                  className="text-ink-faint hover:text-rose"
-                >
-                  Remove
-                </button>
-              </div>
-            </div>
-          </Card>
-        ))}
-      </div>
+  const form = (
+    <>
+      <h3 className="text-sm font-semibold text-ink">{editingId ? 'Edit achievement' : 'Add achievement'}</h3>
+      <form className="mt-4 space-y-4" onSubmit={handleSubmit(onSubmit)} noValidate>
+        {formError !== null ? <ErrorBanner error={formError} /> : null}
+        <div className="grid gap-4 sm:grid-cols-2">
+          <TextField label="Title" placeholder="Best Hackathon Project 2022" error={errors.title?.message} {...register('title')} />
+          <MonthField label="Date (optional)" value={dateValue} onChange={(v) => setValue('date', v, { shouldValidate: true })} />
+        </div>
+        <TextArea label="Description (optional)" rows={3} {...register('description')} />
+        <div className="flex gap-3">
+          <Button type="submit" variant="accent" loading={isSubmitting} disabled={isSubmitting}>
+            {editingId ? 'Save changes' : 'Add achievement'}
+          </Button>
+          <Button type="button" variant="ghost" onClick={cancelEdit} disabled={isSubmitting}>
+            Cancel
+          </Button>
+        </div>
+      </form>
+    </>
+  );
 
-      <Card>
-        <h3 className="text-sm font-semibold text-ink">{editingId ? 'Edit achievement' : 'Add achievement'}</h3>
-        <form className="mt-4 space-y-4" onSubmit={handleSubmit(onSubmit)} noValidate>
-          {formError !== null ? <ErrorBanner error={formError} /> : null}
-          <div className="grid gap-4 sm:grid-cols-2">
-            <TextField label="Title" placeholder="Best Hackathon Project 2022" error={errors.title?.message} {...register('title')} />
-            <TextField label="Date (optional)" placeholder="2022-11" {...register('date')} />
-          </div>
-          <TextArea label="Description (optional)" rows={3} {...register('description')} />
-          <div className="flex gap-3">
-            <Button type="submit" variant="secondary" loading={isSubmitting}>
-              {editingId ? 'Save changes' : 'Add achievement'}
+  const isOpen = isAdding || editingId !== null;
+  const isEmpty = profile.achievements.length === 0;
+
+  if (isEmpty && !isOpen) {
+    return (
+      <div className="space-y-4">
+        <EmptyState
+          icon={<TrophyIcon className="h-5 w-5" />}
+          title="No achievements added yet."
+          hint="Awards, competitions, publications, leadership — anything worth citing."
+          action={
+            <Button type="button" variant="secondary" onClick={startAdd}>
+              + Add Achievement
             </Button>
-            {editingId && (
-              <Button type="button" variant="ghost" onClick={cancelEdit}>
-                Cancel
-              </Button>
-            )}
-          </div>
-        </form>
-      </Card>
+          }
+        />
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-4">
+      {deleteError !== null ? <ErrorBanner error={deleteError} /> : null}
+      {!isEmpty && (
+        <div className="space-y-3">
+          {profile.achievements.map((item) => (
+            <div
+              key={item.evidenceId}
+              className={`animate-card-in transition-all duration-150 ${
+                deletingId === item.evidenceId ? 'scale-[0.98] opacity-50' : 'scale-100 opacity-100'
+              }`}
+            >
+              <RecordCard
+                title={
+                  <span className="inline-flex items-center gap-2">
+                    <span aria-hidden="true">🏆</span>
+                    {item.title}
+                  </span>
+                }
+                meta={item.date ?? undefined}
+                onEdit={() => startEdit(item.evidenceId)}
+                onDelete={() => handleDelete(item.evidenceId)}
+                deleting={deletingId === item.evidenceId}
+                removeLabel="Remove achievement entry"
+              >
+                {item.description && <p className="mt-2 text-sm text-ink-muted">{item.description}</p>}
+              </RecordCard>
+            </div>
+          ))}
+        </div>
+      )}
+      <SectionEditorToggle open={isOpen} addLabel="Add Achievement" onOpen={startAdd}>
+        {form}
+      </SectionEditorToggle>
     </div>
   );
 }

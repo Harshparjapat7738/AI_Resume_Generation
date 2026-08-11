@@ -26,4 +26,11 @@ public final class ApplicationRequests {
 
     public record UpdateStatusRequest(@NotNull ApplicationStatus status, String note) {
     }
+
+    /** Records that one output of a {@code GenerationType.ALL} application failed to
+     *  generate — see {@code Application.recordOutputFailure}. {@code reason} is a short,
+     *  already-safe-to-display message (the caller's own caught error message, e.g.
+     *  {@code ApiException.getMessage()} — never a stack trace). */
+    public record RecordOutputFailureRequest(@NotBlank String reason) {
+    }
 }

@@ -208,6 +208,70 @@ class ApplicationServiceTest {
         }
     }
 
+    @Nested
+    @DisplayName("recordOutputFailure")
+    class RecordOutputFailure {
+
+        @Test
+        void recordsTheReasonAgainstTheNamedOutputWithoutTouchingTheOthersOrOverallStatus() {
+            Application application = new Application(USER_ID, JD_ID, "Backend Engineer", "Acme",
+                    GenerationType.ALL, null);
+            application.attachResume(RESUME_ID, true); // one output already succeeded
+            when(applications.findByIdAndUserId("app-1", USER_ID)).thenReturn(Optional.of(application));
+
+            Application result = service.recordOutputFailure(USER_ID, "app-1", "email", "AI_GENERATION_FAILED");
+
+            assertThat(result.emailError()).isEqualTo("AI_GENERATION_FAILED");
+            assertThat(result.resumeError()).isNull();
+            assertThat(result.coverLetterError()).isNull();
+            assertThat(result.resumeVersionId()).isEqualTo(RESUME_ID); // untouched
+            // ALL still needs cover letter + email — recording a failure must not fabricate
+            // COMPLETED, but it also must not force the whole application to FAILED: the
+            // other, already-succeeded output (resume) stays intact and the still-pending
+            // cover letter can still succeed independently.
+            assertThat(result.status()).isEqualTo(ApplicationStatus.PROCESSING);
+        }
+
+        @Test
+        void aSubsequentSuccessfulAttachClearsThatOutputsOwnErrorOnly() {
+            Application application = new Application(USER_ID, JD_ID, "Backend Engineer", "Acme",
+                    GenerationType.ALL, null);
+            when(applications.findByIdAndUserId("app-1", USER_ID)).thenReturn(Optional.of(application));
+            service.recordOutputFailure(USER_ID, "app-1", "resume", "AI_GENERATION_FAILED");
+            service.recordOutputFailure(USER_ID, "app-1", "email", "AI_GENERATION_FAILED");
+
+            when(resumeServiceClient.getResume(RESUME_ID))
+                    .thenReturn(new ResumeVersionDto(RESUME_ID, JD_ID, "Backend Engineer", "Acme"));
+            when(assessmentServiceClient.get(RESUME_ID)).thenReturn(new AssessmentDto(RESUME_ID));
+            Application result = service.attachResume(USER_ID, "app-1", RESUME_ID);
+
+            assertThat(result.resumeError()).isNull(); // cleared by the successful retry
+            assertThat(result.emailError()).isEqualTo("AI_GENERATION_FAILED"); // untouched
+        }
+
+        @Test
+        void rejectsAnUnknownOutputName() {
+            Application application = new Application(USER_ID, JD_ID, "Backend Engineer", "Acme",
+                    GenerationType.ALL, null);
+            when(applications.findByIdAndUserId("app-1", USER_ID)).thenReturn(Optional.of(application));
+
+            assertThatThrownBy(() -> service.recordOutputFailure(USER_ID, "app-1", "coverletter", "x"))
+                    .isInstanceOf(ApiException.class)
+                    .extracting(ex -> ((ApiException) ex).code())
+                    .isEqualTo(ErrorCode.VALIDATION_ERROR);
+        }
+
+        @Test
+        void doesNotOwnAnApplicationBelongingToAnotherUser() {
+            when(applications.findByIdAndUserId("app-1", USER_ID)).thenReturn(Optional.empty());
+
+            assertThatThrownBy(() -> service.recordOutputFailure(USER_ID, "app-1", "email", "x"))
+                    .isInstanceOf(ApiException.class)
+                    .extracting(ex -> ((ApiException) ex).code())
+                    .isEqualTo(ErrorCode.RESOURCE_NOT_FOUND);
+        }
+    }
+
     private static FeignException.NotFound notFound() {
         Request request = Request.create(HttpMethod.GET, "/x", java.util.Map.of(), null, StandardCharsets.UTF_8, null);
         return new FeignException.NotFound("not found", request, null, null);

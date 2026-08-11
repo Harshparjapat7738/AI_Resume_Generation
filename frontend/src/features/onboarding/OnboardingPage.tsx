@@ -1,12 +1,14 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { AppHeader } from '@/components/layout/AppHeader';
 import { Button } from '@/components/ui/Button';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { FullScreenSpinner } from '@/components/ui/FullScreenSpinner';
+import { showToast } from '@/components/ui/toast';
 import { AchievementsManager } from '@/features/profile-shared/AchievementsManager';
 import { CertificationsManager } from '@/features/profile-shared/CertificationsManager';
+import { ConfirmedStepNav } from '@/features/profile-shared/ConfirmedStepNav';
 import { EducationManager } from '@/features/profile-shared/EducationManager';
 import { ExperienceManager } from '@/features/profile-shared/ExperienceManager';
 import { PersonalInfoForm } from '@/features/profile-shared/PersonalInfoForm';
@@ -14,6 +16,7 @@ import { ProjectsManager } from '@/features/profile-shared/ProjectsManager';
 import { SkillsManager } from '@/features/profile-shared/SkillsManager';
 import * as profileApi from '@/services/profileApi';
 import { computeProfileCompletion } from '@/services/profileApi';
+import { ProfileCompletionModal } from './ProfileCompletionModal';
 
 const steps = [
   { key: 'personal', label: 'Personal' },
@@ -26,6 +29,18 @@ const steps = [
   { key: 'review', label: 'Review' },
 ] as const;
 
+// Wizard position only — every profile record itself is already persisted server-side the
+// moment it's added/edited (verified independently of this). sessionStorage (not
+// localStorage) so it survives a refresh within this browsing session but doesn't linger
+// indefinitely once the tab closes.
+const STEP_STORAGE_KEY = 'careerforge:onboarding-step';
+
+function readStoredStep(): number {
+  const raw = window.sessionStorage.getItem(STEP_STORAGE_KEY);
+  const parsed = raw === null ? NaN : Number.parseInt(raw, 10);
+  return Number.isInteger(parsed) && parsed >= 0 && parsed < steps.length ? parsed : 0;
+}
+
 /**
  * Only sections profile-service actually persists appear here — every section below has a
  * real backend endpoint (see docs/API_CATALOG.md). Personal info and at least one
@@ -36,7 +51,19 @@ const steps = [
 export function OnboardingPage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const [step, setStep] = useState(0);
+  const [step, setStep] = useState(readStoredStep);
+  const [finishStatus, setFinishStatus] = useState<'idle' | 'checking'>('idle');
+  const [finishError, setFinishError] = useState<unknown>(null);
+  // Set once the freshly-confirmed profile is genuinely 100% complete — renders the
+  // celebration overlay in place of the rest of this page (see the bottom of this component).
+  const [celebrateName, setCelebrateName] = useState<string | null>(null);
+  // Guards a fast double-click landing two "Finish profile" requests before the first
+  // re-render disables the button — same pattern used by ConfirmedStepNav/PersonalInfoForm.
+  const finishingRef = useRef(false);
+
+  useEffect(() => {
+    window.sessionStorage.setItem(STEP_STORAGE_KEY, String(step));
+  }, [step]);
 
   const profileQuery = useQuery({ queryKey: ['profile'], queryFn: profileApi.getProfile });
 
@@ -63,6 +90,48 @@ export function OnboardingPage() {
 
   const currentKey = steps[step]?.key;
 
+  const goToDashboard = () => {
+    window.sessionStorage.removeItem(STEP_STORAGE_KEY);
+    navigate('/dashboard', { replace: true });
+  };
+
+  /**
+   * The wizard's terminal action. Re-fetches rather than trusting the locally-cached
+   * `completion` (same reasoning as ConfirmedStepNav: confirms what's actually on the server,
+   * not just what this tab optimistically believes) — the celebration only ever renders once
+   * that confirmed data says 100%, and nothing here navigates anywhere until this succeeds.
+   */
+  const handleFinish = async () => {
+    if (finishingRef.current) return;
+    finishingRef.current = true;
+    setFinishError(null);
+    setFinishStatus('checking');
+    try {
+      const fresh = await profileApi.getProfile();
+      updateCache(fresh);
+      const freshCompletion = computeProfileCompletion(fresh);
+      if (freshCompletion.percentage === 100) {
+        setCelebrateName(fresh.personalInformation.fullName?.trim() || 'there');
+      } else {
+        goToDashboard();
+      }
+    } catch (error) {
+      setFinishError(error);
+    } finally {
+      setFinishStatus('idle');
+      finishingRef.current = false;
+    }
+  };
+
+  if (celebrateName !== null) {
+    return (
+      <div className="min-h-screen bg-void">
+        <AppHeader />
+        <ProfileCompletionModal name={celebrateName} onGoToDashboard={goToDashboard} />
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-void">
       <AppHeader />
@@ -84,7 +153,7 @@ export function OnboardingPage() {
           {steps.map((s, index) => (
             <li key={s.key} className="flex items-center gap-2">
               <span
-                className={`flex h-6 w-6 items-center justify-center rounded-full border text-[11px] font-semibold ${
+                className={`flex h-6 w-6 items-center justify-center rounded-full border text-[11px] font-semibold transition-colors duration-300 ${
                   index === step
                     ? 'border-ember-soft text-ember-soft'
                     : index < step
@@ -94,24 +163,37 @@ export function OnboardingPage() {
               >
                 {index < step ? '✓' : index + 1}
               </span>
-              <span className={index === step ? 'text-ink' : ''}>{s.label}</span>
+              <span className={`transition-colors duration-300 ${index === step ? 'text-ink' : ''}`}>{s.label}</span>
               {index < steps.length - 1 && <span className="mx-1 h-px w-4 bg-border" aria-hidden="true" />}
             </li>
           ))}
         </ol>
 
         {currentKey === 'personal' && (
-          <div>
+          <div className="animate-step-in">
             <h2 className="text-xl font-semibold text-ink">Tell us who you are</h2>
-            <p className="mt-1 text-sm text-ink-muted">This appears at the top of everything generated.</p>
+            <p className="mt-1.5 text-sm text-ink-muted">This appears at the top of everything generated.</p>
             <div className="mt-6">
-              <PersonalInfoForm profile={profile} onSaved={updateCache} submitLabel="Save & continue" />
+              <PersonalInfoForm
+                profile={profile}
+                onSaved={updateCache}
+                afterSave={() => {
+                  showToast('✓ Saved — your data is stored.');
+                  goNext();
+                }}
+                submitLabel="Save & continue"
+              />
             </div>
-            <div className="mt-4 flex justify-end">
-              <Button variant="ghost" onClick={goNext}>
-                {completion.sections.personal ? 'Continue' : 'Skip for now'}
-              </Button>
-            </div>
+            {/* Only offered while the section is genuinely empty — once it holds real data,
+                "Save & continue" above is the one way forward, so a second button that skips
+                straight past it (and any unsaved edits) would just be a confusing duplicate. */}
+            {!completion.sections.personal && (
+              <div className="mt-4 flex justify-end">
+                <Button variant="ghost" onClick={goNext}>
+                  Skip for now
+                </Button>
+              </div>
+            )}
           </div>
         )}
 
@@ -122,7 +204,14 @@ export function OnboardingPage() {
             <div className="mt-6">
               <EducationManager profile={profile} onChanged={updateCache} />
             </div>
-            <StepNav onBack={goBack} onNext={goNext} hasData={completion.sections.education} />
+            <ConfirmedStepNav
+              onBack={goBack}
+              onNext={goNext}
+              onConfirmSaved={updateCache}
+              hasData={completion.sections.education}
+              verify={(p) => p.education.length > 0}
+              itemNamePlural="education entries"
+            />
           </div>
         )}
 
@@ -136,7 +225,14 @@ export function OnboardingPage() {
             <div className="mt-6">
               <ExperienceManager profile={profile} onChanged={updateCache} />
             </div>
-            <StepNav onBack={goBack} onNext={goNext} hasData={completion.sections.experience} />
+            <ConfirmedStepNav
+              onBack={goBack}
+              onNext={goNext}
+              onConfirmSaved={updateCache}
+              hasData={completion.sections.experience}
+              verify={(p) => p.experiences.length > 0}
+              itemNamePlural="experience entries"
+            />
           </div>
         )}
 
@@ -147,7 +243,14 @@ export function OnboardingPage() {
             <div className="mt-6">
               <SkillsManager profile={profile} onChanged={updateCache} />
             </div>
-            <StepNav onBack={goBack} onNext={goNext} hasData={completion.sections.skills} />
+            <ConfirmedStepNav
+              onBack={goBack}
+              onNext={goNext}
+              onConfirmSaved={updateCache}
+              hasData={completion.sections.skills}
+              verify={(p) => p.skills.length > 0}
+              itemNamePlural="skills"
+            />
           </div>
         )}
 
@@ -158,7 +261,14 @@ export function OnboardingPage() {
             <div className="mt-6">
               <ProjectsManager profile={profile} onChanged={updateCache} />
             </div>
-            <StepNav onBack={goBack} onNext={goNext} hasData={completion.sections.projects} />
+            <ConfirmedStepNav
+              onBack={goBack}
+              onNext={goNext}
+              onConfirmSaved={updateCache}
+              hasData={completion.sections.projects}
+              verify={(p) => p.projects.length > 0}
+              itemNamePlural="projects"
+            />
           </div>
         )}
 
@@ -169,7 +279,14 @@ export function OnboardingPage() {
             <div className="mt-6">
               <CertificationsManager profile={profile} onChanged={updateCache} />
             </div>
-            <StepNav onBack={goBack} onNext={goNext} hasData={completion.sections.certifications} />
+            <ConfirmedStepNav
+              onBack={goBack}
+              onNext={goNext}
+              onConfirmSaved={updateCache}
+              hasData={completion.sections.certifications}
+              verify={(p) => p.certifications.length > 0}
+              itemNamePlural="certifications"
+            />
           </div>
         )}
 
@@ -180,7 +297,14 @@ export function OnboardingPage() {
             <div className="mt-6">
               <AchievementsManager profile={profile} onChanged={updateCache} />
             </div>
-            <StepNav onBack={goBack} onNext={goNext} hasData={completion.sections.achievements} />
+            <ConfirmedStepNav
+              onBack={goBack}
+              onNext={goNext}
+              onConfirmSaved={updateCache}
+              hasData={completion.sections.achievements}
+              verify={(p) => p.achievements.length > 0}
+              itemNamePlural="achievements"
+            />
           </div>
         )}
 
@@ -197,28 +321,22 @@ export function OnboardingPage() {
               {profile.achievements.length} achievement{profile.achievements.length === 1 ? '' : 's'}. You can
               add more or edit any of this later from your profile page.
             </p>
+            {finishError !== null && (
+              <div className="mt-4">
+                <ErrorBanner error={finishError} />
+              </div>
+            )}
             <div className="mt-6 flex justify-between">
-              <Button variant="ghost" onClick={goBack}>
+              <Button variant="ghost" onClick={goBack} disabled={finishStatus === 'checking'}>
                 Back
               </Button>
-              <Button onClick={() => navigate('/', { replace: true })}>Finish profile</Button>
+              <Button onClick={handleFinish} loading={finishStatus === 'checking'} disabled={finishStatus === 'checking'}>
+                Finish profile
+              </Button>
             </div>
           </div>
         )}
       </main>
-    </div>
-  );
-}
-
-function StepNav({ onBack, onNext, hasData }: { onBack: () => void; onNext: () => void; hasData: boolean }) {
-  return (
-    <div className="mt-6 flex justify-between">
-      <Button variant="ghost" onClick={onBack}>
-        Back
-      </Button>
-      <Button variant={hasData ? 'primary' : 'ghost'} onClick={onNext}>
-        {hasData ? 'Continue' : 'Skip'}
-      </Button>
     </div>
   );
 }

@@ -72,7 +72,7 @@ public class CoverLetterGenerationService {
      *  pattern resume-service and {@link EmailGenerationService} both use. */
     public CoverLetterVersion generate(String userId, String applicationId) {
         Application application = applicationService.requireOwned(userId, applicationId);
-        requireCoverLetterOnly(application);
+        requireCoverLetterGenerationAllowed(application);
 
         JdAnalysisDto analysis = fetchAnalysis(application.jobDescriptionId());
         List<EvidenceItem> evidence = fetchEvidence();
@@ -145,8 +145,9 @@ public class CoverLetterGenerationService {
 
     // ---------------------------------------------------------------- guards ----
 
-    private void requireCoverLetterOnly(Application application) {
-        if (application.generationType() != GenerationType.COVER_LETTER_ONLY) {
+    private void requireCoverLetterGenerationAllowed(Application application) {
+        GenerationType type = application.generationType();
+        if (type != GenerationType.COVER_LETTER_ONLY && type != GenerationType.ALL) {
             throw new ApiException(ErrorCode.VALIDATION_ERROR,
                     "This application's generation type does not include cover-letter generation.");
         }

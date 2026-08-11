@@ -144,6 +144,25 @@ class EmailGenerationServiceTest {
         }
 
         @Test
+        @DisplayName("GenerationType.ALL (\"Generate All\") is allowed to generate an email, not just EMAIL_ONLY")
+        void allowsGenerationTypeAll() throws Exception {
+            Application all = new Application(USER_ID, "jd-1", "Backend Engineer", "Acme", GenerationType.ALL, null);
+            when(applications.findByIdAndUserId(APP_ID, USER_ID)).thenReturn(Optional.of(all));
+            when(profileServiceClient.getEvidence()).thenReturn(List.of(sampleEvidence()));
+            when(profileServiceClient.getProfile()).thenReturn(new ProfileDto(new PersonalInformationDto("Jane Doe")));
+            when(aiServiceClient.generateEmailContent(any()))
+                    .thenReturn(aiResponse("I have led backend systems.", "My resume is attached."));
+
+            EmailContent result = service.generate(USER_ID, APP_ID);
+
+            assertThat(result).isNotNull();
+            assertThat(all.emailId()).isEqualTo(result.id());
+            // ALL needs resume + cover letter too — attaching just the email must not
+            // prematurely mark the whole application COMPLETED (Application.deriveStatus).
+            assertThat(all.status().name()).isEqualTo("PROCESSING");
+        }
+
+        @Test
         void rejectsAnApplicationWithNoConfirmedJobTitle() {
             Application noTitle = new Application(USER_ID, "jd-1", null, null,
                     GenerationType.EMAIL_ONLY, null);

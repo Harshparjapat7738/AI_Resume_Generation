@@ -49,4 +49,21 @@ public final class ClientDtos {
 
     public record ResumeContentResponse(JsonNode content, JsonNode grounding, List<String> removedSections, JsonNode provenance) {
     }
+
+    // ---- document-service (custom templates) -------------------------------
+
+    public record TemplateStructureDto(
+            Integer pageWidthTwips, Integer pageHeightTwips, Integer marginTopTwips, Integer marginBottomTwips,
+            Integer marginLeftTwips, Integer marginRightTwips, int columnCount, List<String> fontsUsed,
+            List<Double> fontSizesPt, List<String> colorsUsedHex, List<String> alignmentsUsed,
+            List<String> headingsFound, int paragraphCount, int tableCount, boolean hasHeader, boolean hasFooter) {
+    }
+
+    public record DetectedFieldDto(String token, String context, String suggestedField) {
+    }
+
+    public record CustomTemplateAssetDto(
+            String id, String originalFilename, long byteSize, String sha256,
+            TemplateStructureDto structure, List<DetectedFieldDto> detectedFields, String createdAt) {
+    }
 }

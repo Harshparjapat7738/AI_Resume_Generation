@@ -29,11 +29,14 @@ projects, certifications, achievements) → paste a job description → confirm 
 analysed → generate grounded resume content → see a real ATS/JD-fit score, honestly
 reported gaps and recommendations.**
 
-`auth-service`, `profile-service` (all six evidence-bearing sections via an 8-step
-onboarding wizard and an always-editable `/profile` page), `jd-service` (paste or URL
-intake — the URL path is a server-side fetch behind an SSRF guard, never browser-side
-scraping, see [ADR-015](docs/ARCHITECTURE_DECISIONS.md#adr-015) — plus confirm and
-analysis), `resume-service` (generation — synchronous, see
+`auth-service` (email/password, plus Google sign-in — Authorization Code + PKCE, ID token
+verified against Google's JWKS, links to or creates a CareerForge account; backend and
+tests are in, no frontend entry point yet), `profile-service` (all six evidence-bearing
+sections via an 8-step onboarding wizard and an always-editable `/profile` page),
+`jd-service` (paste or URL intake — the URL path is a server-side fetch behind an SSRF
+guard, never browser-side scraping, see
+[ADR-015](docs/ARCHITECTURE_DECISIONS.md#adr-015) — plus confirm and analysis),
+`resume-service` (generation — synchronous, see
 [ADR-013](docs/ARCHITECTURE_DECISIONS.md#adr-013) — plus a built-in template catalogue, see
 [ADR-016](docs/ARCHITECTURE_DECISIONS.md#adr-016)), `document-service` (real Resume PDF
 rendering against the selected template, streamed through an authenticated download endpoint
@@ -49,9 +52,10 @@ JSON Schema validation, and the grounding validator that enforces the no-fabrica
 Email generation (subject + body, grounded — [ADR-019](docs/ARCHITECTURE_DECISIONS.md#adr-019))
 and cover-letter generation (grounded, evidence-selected against the job's actual
 requirements — [ADR-020](docs/ARCHITECTURE_DECISIONS.md#adr-020)) are also real, both via
-`application-service`'s central `Application` aggregate. Not yet implemented: Google OAuth,
-JD file (PDF/DOCX) intake, custom-upload/online templates, combined (`ALL`) generation,
-Gmail drafts, and DOCX rendering. See
+`application-service`'s central `Application` aggregate. Not yet implemented: a frontend
+"Sign in with Google" entry point (the backend flow is done, see above), JD file (PDF/DOCX)
+intake, custom-upload/online templates, combined (`ALL`) generation, Gmail drafts, and DOCX
+rendering. See
 [`docs/API_CATALOG.md`](docs/API_CATALOG.md) for exactly what's implemented versus planned, and
 [`docs/API_INTEGRATION.md`](docs/API_INTEGRATION.md) for how the frontend calls it.
 

@@ -100,6 +100,13 @@ public class AuthService {
                 .orElseThrow(() -> new ApiException(ErrorCode.RESOURCE_NOT_FOUND));
     }
 
+    /** Mints a fresh token pair (new refresh-token family) for an already-authenticated
+     *  user — the same path {@link #login} uses after a password check, reused by
+     *  {@code GoogleOAuthService} after it has verified a Google ID token instead. */
+    public Tokens issueSessionTokens(String userId) {
+        return issueTokenPair(userId, UUID.randomUUID().toString(), null);
+    }
+
     private void revokeFamily(String familyId, String reason) {
         Instant now = Instant.now();
         refreshTokens.findByFamilyId(familyId).forEach(token -> {

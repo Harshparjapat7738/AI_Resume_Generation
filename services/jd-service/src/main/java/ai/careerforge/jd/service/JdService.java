@@ -20,12 +20,17 @@ import ai.careerforge.jd.repository.JdVersionRepository;
 import ai.careerforge.jd.repository.JobDescriptionRepository;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import feign.FeignException;
 import java.util.List;
 import java.util.regex.Pattern;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 @Service
 public class JdService {
+
+    private static final Logger log = LoggerFactory.getLogger(JdService.class);
 
     private static final Pattern WHITESPACE = Pattern.compile("[ \\t\\x0B\\f\\r]+");
     private static final Pattern BLANK_LINES = Pattern.compile("\\n{3,}");
@@ -131,8 +136,15 @@ public class JdService {
     }
 
     private JdAnalysis runAnalysis(JobDescription jd, JdVersion version) {
-        JdAnalysisResponse response = aiServiceClient.analyseJd(
-                new JdAnalysisRequest(version.rawText(), null));
+        JdAnalysisResponse response;
+        try {
+            response = aiServiceClient.analyseJd(new JdAnalysisRequest(version.rawText(), null));
+        } catch (FeignException.BadGateway | FeignException.ServiceUnavailable ex) {
+            throw new ApiException(ErrorCode.AI_GENERATION_FAILED);
+        } catch (FeignException ex) {
+            log.warn("JD analysis failed for jobDescriptionId={}: {}", jd.id(), ex.getMessage());
+            throw new ApiException(ErrorCode.AI_GENERATION_FAILED);
+        }
 
         JdAnalysisPayload payload = readPayload(response.analysis());
 

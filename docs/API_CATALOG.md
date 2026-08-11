@@ -4,7 +4,8 @@ Every implemented endpoint, documented before it is considered done. Updated in 
 pull request that adds, changes or removes an API.
 
 **Current state:** a first vertical slice is implemented ahead of the milestone-by-milestone
-plan — `auth-service` (register/login/refresh/logout/me), `profile-service` (personal info,
+plan — `auth-service` (register/login/refresh/logout/me, plus Google OAuth sign-in),
+`profile-service` (personal info,
 education, experience, skills, projects, certifications and achievements — all six
 evidence-bearing sections), `jd-service` (text intake, SSRF-guarded URL intake, confirm,
 analysis — see ADR-015), `resume-service` (synchronous generation + history, plus the
@@ -13,10 +14,10 @@ rendering against the selected built-in template — see ADR-018), `assessment-s
 JD-fit scoring, scoped to structured content rather than a rendered document — see ADR-014)
 and `application-service` (the central `Application` aggregate — create, attach a resume,
 list, get, status lifecycle and history, all by reference, see ADR-017 — plus grounded email
-generation, ADR-019, and grounded cover-letter generation, ADR-020) are real. Everything else
-in §3 remains a planned contract, moving into §2 as it ships. OAuth, JD file intake, resume
-version history, custom-upload and online templates, profile versions/import, combined
-(`ALL`) generation, Gmail-draft generation, DOCX rendering, and notification are not yet
+generation, ADR-019, grounded cover-letter generation, ADR-020, and combined "Generate All"
+generation, ADR-022) are real. Everything else in §3 remains a planned contract, moving into
+§2 as it ships. JD file intake, resume version history, custom-upload and online templates,
+profile versions/import, Gmail-draft generation, DOCX rendering, and notification are not yet
 implemented.
 
 **Base URL** — everything public goes through the gateway: `http://localhost:8080`.
@@ -201,6 +202,27 @@ no cookie was present.
 **GET** `/api/auth/me` — Bearer
 
 Response `200`: `{ "userId": "...", "email": "...", "displayName": "...", "roles": ["ROLE_USER"] }`
+
+---
+
+**GET** `/api/auth/oauth2/authorize/google` — Public
+
+Begins Authorization Code + PKCE (docs/EXTERNAL_APIS.md "Google OAuth 2.0"). Not a JSON
+endpoint — a full browser navigation that `302`s to Google's consent screen. `302` to a
+frontend error page instead if Google sign-in isn't configured (`GOOGLE_CLIENT_ID`/
+`GOOGLE_CLIENT_SECRET` unset — email/password keeps working either way).
+
+**GET** `/api/auth/oauth2/callback/google` — Public
+
+Google redirects here with `code`+`state` (or `error` if the user declined consent).
+Validates `state` (single-use, Redis-backed — a replay or unknown value fails the same as an
+expired one), exchanges `code` for tokens, verifies the ID token's signature/issuer/audience/
+expiry, resolves or creates the account (matched first by linked `oauth_accounts` row, then
+by a verified-email match against an existing password account, otherwise a new OAuth-only
+account is created), sets the refresh cookie exactly as `/login` does, and `302`s to the
+frontend. Every failure — expired state, unverified email, a Google error — ends in the same
+kind of redirect (`/login?error=google_oauth`), never a JSON error a browser navigation can't
+act on.
 
 ---
 
@@ -499,10 +521,14 @@ button in that case rather than auto-triggering it silently).
 
 **The central `Application` aggregate — see ARCHITECTURE_DECISIONS.md ADR-017.** Stores
 references only (job, generation type, template, resume, cover letter, email, assessment),
-never a copy of what another service owns. `RESUME_ONLY`, `EMAIL_ONLY` (ADR-019) and
-`COVER_LETTER_ONLY` (ADR-020) all reach `COMPLETED` today. `ALL` remains a valid, storable
-value with no combined pipeline behind it yet, since it needs every artifact type to exist
-together (see Milestone 8 below for what else remains unimplemented in this milestone).
+never a copy of what another service owns. `RESUME_ONLY`, `EMAIL_ONLY` (ADR-019),
+`COVER_LETTER_ONLY` (ADR-020) and `ALL` ("Generate All", ADR-022) all reach `COMPLETED`
+today — `ALL` once all three artifacts have attached. Each of the three outputs `ALL`
+requires is generated independently (the same generate/attach calls the single-output types
+use — see `POST .../resume`, `POST .../email`, `POST .../cover-letter` below), so one failing
+never blocks or hides the other two; see `resumeError`/`coverLetterError`/`emailError` and
+`POST .../outputs/{output}/failed` below for how a per-output failure is recorded and
+retried.
 
 ---
 
@@ -539,15 +565,22 @@ Response `201`:
   "assessed": true,
   "status": "COMPLETED",
   "failureCode": null,
+  "resumeError": null,
+  "coverLetterError": null,
+  "emailError": null,
   "createdAt": "...",
   "updatedAt": "..."
 }
 ```
 
 `status` is derived per `generationType` (`Application.deriveStatus()`): `DRAFT` until that
-type's required artifact exists, `COMPLETED` once it does (`RESUME_ONLY` → resume,
-`EMAIL_ONLY` → email, `COVER_LETTER_ONLY` → cover letter), or `PROCESSING` for `ALL` even with
-some artifacts attached, since no pipeline produces all three together yet. `assessed` is
+type's required artifact(s) exist, `COMPLETED` once they do (`RESUME_ONLY` → resume,
+`EMAIL_ONLY` → email, `COVER_LETTER_ONLY` → cover letter, `ALL` → all three), otherwise
+`PROCESSING`. `resumeError`/`coverLetterError`/`emailError` are a second, independent axis on
+top of `status` — set when that specific output's own generate call failed, cleared the
+moment it next succeeds, never forcing `status` itself to `FAILED` (see ADR-022): two outputs
+can be `COMPLETED`-worthy while a third is mid-retry, and `status` only reflects what's
+missing, not what broke. `assessed` is
 best-effort — a missing assessment never blocks creating or completing the application, the
 same way the frontend's own assessment call is non-fatal.
 
@@ -558,7 +591,22 @@ same way the frontend's own assessment call is non-fatal.
 
 **POST** `/api/applications/{id}/resume` — Bearer. `{ "resumeVersionId": "..." }`. Attaches or
 replaces the resume reference on an existing application and recomputes `status`. Same checks
-and error codes as the `resumeVersionId` path of `POST /api/applications`.
+and error codes as the `resumeVersionId` path of `POST /api/applications`. This is the call
+the "Generate All" flow makes after generating the resume (unchanged) via resume-service,
+mirroring how it already generated a resume for `RESUME_ONLY`.
+
+---
+
+**POST** `/api/applications/{id}/outputs/{output}/failed` — Bearer. `{ "reason": "..." }`.
+`{output}` is one of `resume`, `coverLetter`, `email`. Records that one output's own
+generate call failed — see ADR-022. Never changes `status`, only the matching
+`resumeError`/`coverLetterError`/`emailError`; a subsequent successful `POST .../resume`,
+`.../email` or `.../cover-letter` clears it. Used by the frontend's "Generate All"
+orchestration (never by the single-output flows, which surface their own call's error
+directly and have nothing else to attach a per-output reason to).
+
+**Status codes** `200` · `400 VALIDATION_ERROR` (`{output}` isn't one of the three) · `404`
+(not owned)
 
 ---
 
@@ -569,7 +617,10 @@ and error codes as the `resumeVersionId` path of `POST /api/applications`.
 
 **GET** `/api/applications` — Bearer. Paged history for the dashboard.
 `?status=DRAFT|PROCESSING|COMPLETED|FAILED` filters; `?page=&size=` (`size` capped at 100).
-Rows omit `content` — id, `jobTitle`, `company`, `generationType`, `status`, `createdAt` only.
+Rows omit `content` but, unlike the plain single-output types, still carry
+`resumeVersionId`/`coverLetterVersionId`/`emailId`/`resumeError`/`coverLetterError`/
+`emailError` (null for the other generation types) so the dashboard can render a `GenerationType.ALL`
+row's per-output status without an extra request per row.
 
 ---
 
@@ -592,7 +643,8 @@ first: `[{ "fromStatus", "toStatus", "note", "changedAt" }]`.
 **POST** `/api/applications/{id}/email` — Bearer. See ARCHITECTURE_DECISIONS.md ADR-019.
 
 No request body — every input is already on the `Application` (job title, company) or fetched
-from profile-service (evidence, candidate name). Requires `generationType = EMAIL_ONLY` and a
+from profile-service (evidence, candidate name). Requires `generationType` to be
+`EMAIL_ONLY` or `ALL`, and a
 confirmed job title on the application. Calling this again **regenerates**: a new version is
 persisted and `Application.emailId` repoints at it, the same "call generate again" pattern
 `POST /api/resumes/generate` uses.
@@ -636,7 +688,7 @@ the latest version. `404` if no email has been generated for this application ye
 **POST** `/api/applications/{id}/cover-letter` — Bearer. See ARCHITECTURE_DECISIONS.md
 ADR-020.
 
-No request body. Requires `generationType = COVER_LETTER_ONLY`, the job description
+No request body. Requires `generationType` to be `COVER_LETTER_ONLY` or `ALL`, the job description
 confirmed and analysed (reuses `JD_NOT_CONFIRMED` if not), and at least one evidence item on
 the profile. Runs the same two-stage pipeline resume-service uses (evidence selection, then
 content) against ai-service, orchestrated from application-service. Calling this again
@@ -697,12 +749,8 @@ response, validation and error documentation when it ships.
 
 ### Milestone 2 — auth-service
 
-Register/login/refresh/logout/me are implemented — see §2. Still planned:
-
-| Method | Path | Auth | Purpose |
-|---|---|---|---|
-| GET | `/api/auth/oauth2/authorize/google` | Public | Begin Authorization Code + PKCE. |
-| GET | `/api/auth/oauth2/callback/google` | Public | Exchange code, link or create account, issue tokens. |
+Register/login/refresh/logout/me and Google OAuth are all implemented — see §2. Nothing
+remains planned for this milestone.
 
 ### Milestone 3 — profile-service
 
@@ -759,7 +807,9 @@ The `Application` aggregate itself — create, attach a resume, list, get, statu
 and history — is implemented; see §2 and ARCHITECTURE_DECISIONS.md ADR-017. Email generation
 (`POST`/`GET /api/applications/{id}/email`) is implemented; see §2 and ADR-019. Cover-letter
 generation (`POST`/`GET /api/applications/{id}/cover-letter`) is implemented; see §2 and
-ADR-020. Still planned:
+ADR-020. Combined "Generate All" generation (`GenerationType.ALL`, one `Application`, all
+three outputs, independent per-output failure tracking and retry via
+`POST .../outputs/{output}/failed`) is implemented; see §2 and ADR-022. Still planned:
 
 | Method | Path | Auth | Purpose |
 |---|---|---|---|

@@ -27,6 +27,8 @@ implementation reality required a choice the blueprint did not make.
 | [ADR-018](#adr-018) | document-service renders real Resume PDFs synchronously; download streams through the service rather than a presigned URL | Accepted |
 | [ADR-019](#adr-019) | Email generation: deterministic subject/frame + one grounded, model-written highlight paragraph | Accepted |
 | [ADR-020](#adr-020) | Cover-letter generation orchestrated from application-service, mirroring resume-service's two-stage pipeline | Accepted |
+| [ADR-021](#adr-021) | Google OAuth state/PKCE store is Redis, not an HTTP session; account linking trusts only a Google-verified email | Accepted |
+| [ADR-022](#adr-022) | "Generate All" is one `Application`, three independently-tracked outputs generated sequentially through the existing single-output pipelines | Accepted |
 
 ---
 
@@ -1298,3 +1300,227 @@ matching only, not the numeric-claim check.
   `EMAIL_ONLY` are unchanged.
 - Out of scope, per the task: `EMAIL_ONLY`/`ALL` combined generation (`GenerationType.ALL`),
   templates, PDF/DOCX rendering, and any change to the resume pipeline.
+
+---
+
+# ADR-021
+
+## Decision
+
+Google OAuth (Authorization Code + PKCE, docs/EXTERNAL_APIS.md) binds its `state` to the
+PKCE `code_verifier` in **Redis**, not an HTTP session — auth-service already ran fully
+stateless (`SecurityConfig`: `SessionCreationPolicy.STATELESS`, no login form) before this
+change, and stays that way. Account resolution on callback trusts a Google identity only
+when the ID token's own `email_verified` claim is true; it then matches, in order, an
+existing linked `oauth_accounts` row, then an existing password account with the same
+verified email (auto-linked), then falls through to creating a new OAuth-only account
+(`passwordHash: null`). Both new endpoints always end the browser navigation in a redirect —
+never the platform's usual JSON error envelope — because Google delivers the callback as a
+full page load a frontend `fetch` can't intercept.
+
+## Problem
+
+Three things the blueprint and docs/EXTERNAL_APIS.md specify don't have an obvious default
+implementation:
+
+1. **Where does `state` live between the authorize redirect and the callback?** The
+   conventional answer — an `HttpSession` — requires sticky sessions or a shared session
+   store the moment more than one auth-service instance is running, and conflicts with this
+   service's existing deliberately-stateless design.
+2. **What proves a Google identity is safe to attach to (or create) a CareerForge account?**
+   Google's ID token asserts an email, but Google itself flags whether that email is
+   verified — a claim from an identity provider that hasn't verified the mailbox is not
+   meaningfully different from a client asserting its own email unchecked.
+3. **What does the callback return?** Every other auth-service endpoint returns JSON
+   (`AuthResponse` on success, the platform's standard error envelope on failure) — but this
+   endpoint is reached by the browser navigating away from Google, not by a `fetch` call a
+   frontend can catch and branch on.
+
+## Options
+
+For (1): (a) enable a session just for this flow; (b) sign the verifier into the `state`
+value itself (e.g. as a JWT), avoiding server-side storage entirely; (c) store `state` →
+`verifier` in Redis, already a dependency of this service (added ahead of use — see the
+`application-nodocker.yml` comment it previously carried) but never yet wired to anything.
+
+For (2): (a) match only on `oauth_accounts`, requiring a user to explicitly "link" Google
+from a settings page before it can ever sign them in — no auto-linking; (b) match on email
+regardless of Google's `email_verified` claim; (c) match on email, but only when Google
+reports it verified.
+
+For (3): (a) return the platform's normal JSON error envelope on failure, same as every
+other endpoint; (b) always redirect to the frontend, success or failure, with a query-string
+error code on failure.
+
+## Selected Option
+
+(1c), (2c), (3b).
+
+## Reason
+
+For (1): option (a) reintroduces server affinity this service was explicitly built without.
+Option (b) avoids Redis but leaks the verifier's presence into a value that transits the
+browser and Google's own redirect chain — putting the proof of possession in the same place
+as the thing it's meant to protect is a weaker construction than keeping it server-side.
+Redis is already provisioned and already the standard place this codebase puts short-lived,
+single-use server state (see resume-service/api-gateway's own Redis usage), so (c) costs
+nothing new to add and is strictly stronger.
+
+For (2): option (a) is safer still but is a materially different, larger feature (a linked-
+accounts settings UI) than "Google OAuth sign-in" as scoped by this task — deferred, not
+rejected. Option (b) would let anyone who merely *claims* an email at Google (Google does
+allow unverified test/GSuite-transitional addresses in some flows) sign into an existing
+password account without ever proving they control it — a real account-takeover path. Option
+(c) is the standard, safe middle ground every major "Sign in with Google" integration uses.
+
+For (3): option (a) would show a bare JSON blob in the browser window after Google's
+redirect — not a broken security posture, but a broken experience for something that's
+supposed to hand control back to the SPA. Option (b) costs nothing structurally (the
+controller already builds a `ResponseEntity` either way) and degrades honestly: the frontend
+decides how `?error=google_oauth` is displayed, this service just never leaves the user
+looking at raw JSON.
+
+## Impact
+
+- `auth-service` gains `oauth_accounts` and `security_events` (docs/DATABASE.md §3) — the
+  latter's full documented event set is modelled (`SecurityEventType`), but only
+  `OAUTH_LINKED` has a writer today; `LOGIN_SUCCESS`/`LOGIN_FAILURE`/`REFRESH_REUSE` are
+  real, existing code paths (`AuthService.login`/`refresh`) not yet retrofitted to also write
+  an event — tracked as remaining work, not silently dropped.
+  `User` gains `markEmailVerified()` — set only from a Google-verified callback, never from
+  a client-supplied flag.
+- `AuthService` gains `issueSessionTokens(userId)`, a public seam that mints a fresh
+  refresh-token family for an already-authenticated user — the same path `login` uses after
+  a password check, reused by `GoogleOAuthService` after it verifies a Google identity
+  instead. No change to `login`/`refresh`/`logout`'s own behaviour.
+- Google's own access/refresh tokens are read once, during the code exchange, to obtain and
+  verify the ID token, and are never persisted — matches docs/EXTERNAL_APIS.md exactly
+  ("Google's access token is not stored for plain sign-in").
+- `GET /api/auth/oauth2/authorize/google` and `.../callback/google` were already present in
+  the API gateway's `public-paths` allowlist (added ahead of implementation) — no gateway
+  change was needed.
+- `FRONTEND_BASE_URL` is a new env var (default `http://localhost:5173`, matching the
+  gateway's own CORS default) naming where the callback redirects; unrelated to and
+  independent of `VITE_API_BASE_URL`.
+
+---
+
+# ADR-022
+
+## Decision
+
+"Generate All" (`GenerationType.ALL`) creates exactly **one** `Application` and generates its
+three outputs — resume, cover letter, email — **sequentially**, each through the exact
+generate/attach call the corresponding single-output flow already uses
+(`POST /api/resumes/generate` + `POST /api/applications/{id}/resume`;
+`POST /api/applications/{id}/cover-letter`; `POST /api/applications/{id}/email`). No new
+generation pipeline was built. `EmailGenerationService`/`CoverLetterGenerationService`'s
+existing generation-type guard is widened from "exactly `EMAIL_ONLY`" / "exactly
+`COVER_LETTER_ONLY`" to "that type, or `ALL`" — the only change to either service's actual
+generation logic.
+
+A failure in one output is recorded against that output specifically
+(`Application.resumeError`/`coverLetterError`/`emailError`, set via the new
+`POST /api/applications/{id}/outputs/{output}/failed`) and never blocks, hides, or is
+confused with the other two — `Application.status` keeps deriving exactly as it already did
+(`Application.deriveStatus()`, unchanged) from which references are attached, not from
+whether an error is recorded, so `COMPLETED` still requires all three and a failed output
+stays independently retryable by calling that same output's own generate endpoint again.
+
+## Problem
+
+Three questions had no existing answer to reuse:
+
+1. **How does one `Application` end up with three outputs when they're generated by two
+   different pipelines in two different services** (resume-service's own `/generate`,
+   orchestrated by the caller and attached by reference; application-service's own
+   `EmailGenerationService`/`CoverLetterGenerationService`, which generate *and* attach in one
+   call)? `EmailGenerationService`/`CoverLetterGenerationService` also each hard-rejected any
+   `Application` whose `generationType` wasn't exactly their own single-output type — by
+   design, until now, since no caller could reach them any other way.
+2. **How does a partial failure survive a page refresh, with enough detail to say which
+   output failed and why** — not just that *something* about the application is incomplete?
+   `resumeVersionId`/`coverLetterVersionId`/`emailId` being `null` already distinguishes
+   "not generated" from "generated," but resume generation's own failures happen entirely
+   outside application-service (the call never reaches it), so nothing already recorded a
+   reason anywhere the aggregate could report back.
+3. **Can the three outputs be generated concurrently** to finish faster? `Application` uses
+   Spring Data's optimistic locking (`@Version`), and every one of the three generate/attach
+   calls does a read-modify-save on the *same* `Application` document.
+
+## Options
+
+For (1): (a) build a fourth, `ALL`-specific generation pipeline in application-service that
+duplicates resume/cover-letter/email generation into one combined call; (b) keep the three
+existing pipelines exactly as they are and just widen `EmailGenerationService`'s and
+`CoverLetterGenerationService`'s own guard to also accept `ALL`, letting the caller (the
+frontend's orchestration) invoke each one in turn against the same `applicationId`.
+
+For (2): (a) treat `Application.failureCode` (a single field, already used by the
+`PATCH .../status` transition) as good enough — the caller keeps its own record of which call
+failed; (b) add three new nullable per-output error fields plus one new endpoint the caller
+uses to record a failure against a specific output, regardless of which service's call
+actually failed.
+
+For (3): (a) run the three generate calls with `Promise.all`, accepting that a version
+conflict occasionally forces a caller-side retry; (b) run them sequentially, in the order the
+task's own flow describes (resume → cover letter → email).
+
+## Selected Option
+
+(1b), (2b), (3b).
+
+## Reason
+
+For (1): Option (a) is exactly the kind of duplicate implementation reuse was supposed to
+prevent — resume-service's grounded generation and application-service's two AI pipelines
+already exist, are already tested, and already do the right thing; a fourth pipeline would
+maintain the same logic twice for no behavioural difference. Option (b) is a two-line guard
+change per service (verified by a new test in each) plus frontend orchestration — the
+minimum edit that makes the existing, working pipelines reachable for `ALL` too.
+
+For (2): Option (a) fails the task's own requirement directly — "show exactly which output
+failed + reason" needs a reason *per output*, and `failureCode` has no way to say "the email
+failed for this reason but the cover letter is fine." Option (b) is the smallest schema
+change that actually satisfies it, deliberately generic (`{output}` is a path segment, not
+three near-duplicate endpoints) so it works uniformly whether the failing call was
+resume-service's (which application-service never even sees) or application-service's own.
+Recording a failure never touches `status`: forcing the whole `Application` to `FAILED` the
+moment one of three outputs breaks would contradict "do NOT mark the Application fully
+successful if any output fails" in the wrong direction — it would also stop the *other* two,
+already-succeeding outputs from being representable as done.
+
+For (3): given the `@Version` optimistic lock, option (a)'s occasional retry-on-conflict is a
+self-inflicted failure mode with no upside here — the three calls are already fast (a handful
+of Groq requests, single-digit seconds), so sequential execution costs little and removes an
+entire class of spurious "generation failed" reports that would have nothing to do with the
+actual generation logic. It also matches the task's own documented flow (resume → cover
+letter → email) exactly.
+
+## Impact
+
+- `Application` gains `resumeError`/`coverLetterError`/`emailError` (cleared by the matching
+  `attachResume`/`attachEmail`/`attachCoverLetter`) and `recordOutputFailure(output, reason)`.
+  `ApplicationResponse` and `ApplicationSummaryResponse` both gained these three fields (plus,
+  on the summary, the three reference ids) so the dashboard can render `ALL` rows' per-output
+  status without an extra request per row — harmless `null`s for the other generation types,
+  which only ever populate the one field relevant to them.
+- `EmailGenerationService`/`CoverLetterGenerationService`'s private guard methods were
+  renamed (`requireEmailOnly` → `requireEmailGenerationAllowed`, etc.) to stop describing a
+  constraint they no longer enforce.
+- New endpoint `POST /api/applications/{id}/outputs/{output}/failed` — the only new backend
+  endpoint this feature needed.
+- Frontend: `OutputTypePage`'s "Generate All" card is enabled; `ReviewPage`/`TemplatePage`
+  carry `type=ALL` through the existing wizard steps (no new steps — `ALL` uses the same
+  template step `RESUME_ONLY` does); `ProcessingPage` gains a `runAll()` that creates the
+  `Application` then runs the three steps sequentially, each wrapped so one failing doesn't
+  stop the next and is recorded via the new endpoint; a new `AllResultPage` (route
+  `/results/all/:applicationId`) provides the Resume/Cover Letter/Email/ATS Analysis/JD Fit
+  tabs and per-output retry, reusing the existing single-output result pages' display and
+  download/copy logic rather than reimplementing it. `DashboardPage` gained a fourth section
+  for `ALL` applications, unfiltered by status (unlike the existing cover-letter section)
+  specifically so a partially-failed application is visible, not hidden.
+- `RESUME_ONLY`/`EMAIL_ONLY`/`COVER_LETTER_ONLY` are unchanged: verified both by the existing
+  test suites (all 43 application-service tests still pass unmodified) and live, against the
+  real stack, that an `EMAIL_ONLY` application still generates an email and a
+  `COVER_LETTER_ONLY` application is still correctly rejected from generating one.

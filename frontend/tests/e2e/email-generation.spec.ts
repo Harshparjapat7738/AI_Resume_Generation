@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { selectMonth } from './helpers/formControls';
 
 /**
  * End-to-end coverage for EMAIL_ONLY generation (application-service + ai-service;
@@ -26,21 +27,23 @@ async function loginFreshUserToEmailReview(
   await page.waitForURL('**/onboarding');
 
   await page.fill('#fullName', 'Jordan Rivera');
+  // "Save & continue" both saves and advances (PersonalInfoForm's afterSave callback) —
+  // there is no separate "Continue" button on this step.
   await page.getByRole('button', { name: 'Save & continue' }).click();
-  await expect(page.getByRole('button', { name: 'Continue', exact: true })).toBeVisible();
+  await expect(page.getByText('Education')).toBeVisible();
 
   // Education (skipped) -> Experience.
   await page.getByRole('button', { name: /Continue|Skip/ }).first().click();
 
   await page.fill('#company', 'Acme Corp');
   await page.fill('#title', 'Backend Engineer');
-  await page.fill('#start', '2021-03');
-  await page.fill('#end', '2024-01');
+  await selectMonth(page, 'Start', '2021-03');
+  await selectMonth(page, 'End', '2024-01');
   await page.fill('#bullets', 'Built order-processing services\nReduced latency by 60%');
   await page.fill('#technologies', 'Java, Spring Boot');
   await page.getByRole('button', { name: 'Add experience' }).click();
   await expect(page.getByText('EXP-001')).toBeVisible();
-  await page.getByRole('button', { name: 'Continue', exact: true }).click();
+  await page.getByRole('button', { name: 'Save & continue' }).click();
 
   // Skills, Projects, Certifications, Achievements, Review — skip the rest.
   for (let i = 0; i < 4; i++) {
@@ -149,7 +152,7 @@ test('the resume flow is unaffected: Output Type still offers Resume as its own,
   await page.getByRole('button', { name: 'Save & continue' }).click();
 
   await page.goto('/generate');
-  await expect(page.getByRole('button', { name: /Resume/ })).toBeVisible();
+  await expect(page.getByRole('button', { name: /^Resume/ })).toBeVisible();
   await expect(page.getByRole('button', { name: /Email Content/ })).toBeVisible();
   await page.getByRole('button', { name: /^Resume/ }).click();
   await page.waitForURL('**/generate/job**');

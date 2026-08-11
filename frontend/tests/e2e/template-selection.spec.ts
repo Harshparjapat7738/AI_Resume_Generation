@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { selectMonth } from './helpers/formControls';
 
 /**
  * End-to-end coverage for the built-in template catalogue (resume-service's `templates`
@@ -20,21 +21,23 @@ async function loginFreshUserAtConfirmedReview(page: import('@playwright/test').
 
   // Minimal profile — enough evidence for generation to have something to work with.
   await page.fill('#fullName', 'Template Tester');
+  // "Save & continue" both saves and advances (PersonalInfoForm's afterSave callback) —
+  // there is no separate "Continue" button on this step.
   await page.getByRole('button', { name: 'Save & continue' }).click();
-  await expect(page.getByRole('button', { name: 'Continue', exact: true })).toBeVisible();
+  await expect(page.getByText('Education')).toBeVisible();
 
   // Education (skipped — not required for generation) -> Experience.
   await page.getByRole('button', { name: /Continue|Skip/ }).first().click();
 
   await page.fill('#company', 'Acme Corp');
   await page.fill('#title', 'Backend Engineer');
-  await page.fill('#start', '2021-03');
-  await page.fill('#end', '2024-01');
+  await selectMonth(page, 'Start', '2021-03');
+  await selectMonth(page, 'End', '2024-01');
   await page.fill('#bullets', 'Built order-processing services\nReduced latency by 60%');
   await page.fill('#technologies', 'Java, Spring Boot');
   await page.getByRole('button', { name: 'Add experience' }).click();
   await expect(page.getByText('EXP-001')).toBeVisible();
-  await page.getByRole('button', { name: 'Continue', exact: true }).click();
+  await page.getByRole('button', { name: 'Save & continue' }).click();
 
   // Skills, Projects, Certifications, Achievements, Review — skip the rest.
   for (let i = 0; i < 4; i++) {
@@ -45,8 +48,8 @@ async function loginFreshUserAtConfirmedReview(page: import('@playwright/test').
 
   await page.getByRole('link', { name: 'Generate' }).first().click();
   await page.waitForURL('**/generate');
-  await page.getByRole('button', { name: /Resume/ }).click();
-  await page.waitForURL('**/generate/job');
+  await page.getByRole('button', { name: /^Resume/ }).click();
+  await page.waitForURL('**/generate/job**');
 
   await page.fill(
     '#jobDescriptionText',

@@ -91,8 +91,8 @@ const previews: Record<string, { render: () => ReactElement; alt: string }> = {
   },
 };
 
-export function TemplatePreview({ previewKey }: { previewKey: string }) {
-  const entry = previews[previewKey];
+export function TemplatePreview({ previewKey }: { previewKey: string | null }) {
+  const entry = previewKey === null ? undefined : previews[previewKey];
   if (!entry) {
     return (
       <div className="flex h-40 items-center justify-center rounded-xl border border-border bg-void text-xs text-ink-faint">

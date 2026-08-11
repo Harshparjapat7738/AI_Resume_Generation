@@ -64,8 +64,12 @@ public class DocumentController {
         RenderedDocument document = renderService.requireOwnedDocument(userId, id);
         byte[] bytes = renderService.downloadBytes(document);
         HttpHeaders headers = new HttpHeaders();
-        headers.setContentType(MediaType.APPLICATION_PDF);
-        headers.setContentDisposition(ContentDisposition.attachment().filename("resume.pdf").build());
+        boolean isDocx = document.format() == ai.careerforge.document.domain.DocumentFormat.DOCX;
+        headers.setContentType(isDocx
+                ? MediaType.parseMediaType("application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+                : MediaType.APPLICATION_PDF);
+        headers.setContentDisposition(
+                ContentDisposition.attachment().filename(isDocx ? "resume.docx" : "resume.pdf").build());
         return ResponseEntity.ok().headers(headers).body(bytes);
     }
 

@@ -1,6 +1,6 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { Button } from '@/components/ui/Button';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { FullScreenSpinner } from '@/components/ui/FullScreenSpinner';
@@ -14,13 +14,30 @@ import { GenerateLayout } from './GenerateLayout';
  * yet available rather than faked. The chosen templateId travels to /generate/processing as a
  * query param, which resume-service persists on the generation and every derived resume
  * version.
+ *
+ * `type` (set by OutputTypePage, carried here by ReviewPage) travels the same way — `ALL`
+ * ("Generate All") also picks a resume template, unlike email/cover-letter-only, which skip
+ * this step entirely (see ProcessingPage).
  */
 export function TemplatePage() {
   const { jdId = '' } = useParams<{ jdId: string }>();
+  const [searchParams] = useSearchParams();
+  const generationType = searchParams.get('type') ?? 'RESUME_ONLY';
+  // Set when arriving from the Templates page's "Use this template" action — preselected below
+  // once the real catalogue has loaded and confirmed it's a template that actually exists,
+  // rather than trusting the query param blindly.
+  const preselectedTemplateId = searchParams.get('templateId');
   const navigate = useNavigate();
   const [selected, setSelected] = useState<string | null>(null);
 
   const templatesQuery = useQuery({ queryKey: ['templates', 'RESUME'], queryFn: () => listTemplates('RESUME') });
+
+  useEffect(() => {
+    if (selected || !preselectedTemplateId || !templatesQuery.data) return;
+    if (templatesQuery.data.some((t) => t.templateId === preselectedTemplateId)) {
+      setSelected(preselectedTemplateId);
+    }
+  }, [preselectedTemplateId, templatesQuery.data, selected]);
 
   if (templatesQuery.isLoading) {
     return <FullScreenSpinner label="Loading templates…" />;
@@ -98,9 +115,9 @@ export function TemplatePage() {
           <div className="mt-6 flex justify-end">
             <Button
               disabled={!selected}
-              onClick={() => navigate(`/generate/processing/${jdId}?templateId=${selected}`)}
+              onClick={() => navigate(`/generate/processing/${jdId}?templateId=${selected}&type=${generationType}`)}
             >
-              Generate my resume
+              {generationType === 'ALL' ? 'Generate everything' : 'Generate my resume'}
             </Button>
           </div>
         </>

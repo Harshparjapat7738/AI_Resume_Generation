@@ -30,6 +30,15 @@ public class JwtVerifier {
             throw new IllegalStateException(
                     "careerforge.jwt.secret (JWT_SECRET) is missing or shorter than 32 bytes");
         }
+        if (properties.issuer() == null || properties.issuer().isBlank()) {
+            // Normally supplied by config-server's shared application.yml — an unreachable
+            // config-server at startup (the import is `optional:configserver:...`, see
+            // docker-compose.yml) leaves this unbound. Every request would otherwise be
+            // rejected one-by-one with an unhelpful per-request log line; failing loudly at
+            // startup instead makes a broken deployment obvious immediately.
+            throw new IllegalStateException(
+                    "careerforge.jwt.issuer is missing — is config-server reachable and healthy?");
+        }
         this.key = Keys.hmacShaKeyFor(properties.secret().getBytes(StandardCharsets.UTF_8));
         this.issuer = properties.issuer();
     }

@@ -1,9 +1,11 @@
 # ---------------------------------------------------------------------------
 # Profile: nodocker — LOCAL DEVELOPMENT ONLY.
 #
-# This service carries a Redis starter for caching / job streams. Redis is not
-# running in the no-Docker setup, so its health indicator is disabled to keep
-# /actuator/health reporting UP. No functional behaviour changes.
+# Redis backs the Google OAuth state/PKCE store only — register/login/refresh/logout and
+# email/password sign-in need no Redis at all. Redis is not running in the no-Docker setup,
+# so its health indicator is disabled to keep /actuator/health reporting UP; Google sign-in
+# specifically will fail at runtime here unless a local Redis is also running (docker
+# compose up -d redis).
 #
 # Do not activate this profile outside a developer machine.
 # ---------------------------------------------------------------------------

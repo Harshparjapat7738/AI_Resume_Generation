@@ -65,6 +65,106 @@ body {
   mask-image: radial-gradient(ellipse 70% 60% at 50% 0%, black 40%, transparent 90%);
 }
 
+/* Subtle entrance for onboarding step content — replays whenever a step mounts (first
+ * arrival or navigating Back to it), since each step is conditionally rendered rather than
+ * kept mounted. Neutralised for reduced-motion below, same as every other animation here. */
+@utility animate-step-in {
+  animation: step-in 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes step-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Mobile nav panel enter transition — header hamburger menus mount this on open. */
+@utility animate-menu-in {
+  animation: menu-in 180ms ease-out;
+}
+@keyframes menu-in {
+  from {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Record-card entrance — profile-shared/*Manager.tsx, each item in a repeatable section
+ * (education, experience, project, ...). Plays once per card mount (adding a new one, or the
+ * list first rendering) since React keeps existing cards' DOM nodes across re-renders. */
+@utility animate-card-in {
+  animation: card-in 0.2s ease-out;
+}
+@keyframes card-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+/* Toast entrance — ToastViewport (src/components/ui/toast.tsx). */
+@utility animate-toast-in {
+  animation: toast-in 0.25s ease-out;
+}
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+/* Profile-completion celebration — ProfileCompletionModal.tsx (onboarding's final "Finish
+ * profile" moment). The badge pops in with a slight overshoot; the ring behind it echoes the
+ * same beat once, expanding and fading, like a single sonar pulse rather than a repeating
+ * loop — "professional and short," not a looping/distracting effect. */
+@utility animate-celebrate-in {
+  animation: celebrate-in 0.5s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+@keyframes celebrate-in {
+  0% {
+    opacity: 0;
+    transform: scale(0.5);
+  }
+  60% {
+    opacity: 1;
+    transform: scale(1.08);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+@utility animate-celebrate-ring {
+  animation: celebrate-ring 0.9s ease-out;
+}
+@keyframes celebrate-ring {
+  from {
+    opacity: 0.5;
+    transform: scale(0.8);
+  }
+  to {
+    opacity: 0;
+    transform: scale(1.8);
+  }
+}
+
 /* Respect users who have asked the OS to reduce motion: GSAP timelines check this too. */
 @media (prefers-reduced-motion: reduce) {
   *,

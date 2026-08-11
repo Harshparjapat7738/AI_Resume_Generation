@@ -120,4 +120,14 @@ public class User {
     public void recordFailedLogin() {
         this.failedLoginAttempts++;
     }
+
+    public boolean emailVerified() {
+        return emailVerified;
+    }
+
+    /** Set when an identity provider (Google) has already verified ownership of this
+     *  mailbox — never set from a client-supplied flag. */
+    public void markEmailVerified() {
+        this.emailVerified = true;
+    }
 }

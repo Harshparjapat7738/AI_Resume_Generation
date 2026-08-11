@@ -23,14 +23,26 @@ public final class ApplicationResponses {
             boolean assessed,
             ApplicationStatus status,
             String failureCode,
+            String resumeError,
+            String coverLetterError,
+            String emailError,
             Instant createdAt,
             Instant updatedAt) {
     }
 
-    /** Lightweight row for the history/dashboard list — no need to fetch every reference. */
+    /**
+     * Lightweight row for the history/dashboard list — no full content, but still enough to
+     * render "Resume &#10003; | Cover Letter &#10007;" per-output status without an extra
+     * {@code GET} per row (the dashboard needs this for {@code GenerationType.ALL} rows;
+     * {@code null} in every one of these six fields is harmless for the other generation
+     * types, which only ever populate the one field relevant to them).
+     */
     public record ApplicationSummaryResponse(
             String id, String jobDescriptionId, String jobTitle, String company,
-            GenerationType generationType, ApplicationStatus status, Instant createdAt) {
+            GenerationType generationType, String templateId, ApplicationStatus status,
+            String resumeVersionId, String coverLetterVersionId, String emailId,
+            String resumeError, String coverLetterError, String emailError,
+            Instant createdAt) {
     }
 
     public record StatusHistoryResponse(

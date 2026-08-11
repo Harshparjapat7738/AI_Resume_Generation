@@ -60,6 +60,48 @@ export const router = createBrowserRouter([
         },
       },
       {
+        path: '/applications',
+        lazy: async () => {
+          const { ApplicationsPage } = await import('../features/applications/ApplicationsPage');
+          return { Component: ApplicationsPage };
+        },
+      },
+      {
+        path: '/resumes',
+        lazy: async () => {
+          const { ResumesPage } = await import('../features/resumes/ResumesPage');
+          return { Component: ResumesPage };
+        },
+      },
+      {
+        path: '/cover-letters',
+        lazy: async () => {
+          const { CoverLettersPage } = await import('../features/cover-letters/CoverLettersPage');
+          return { Component: CoverLettersPage };
+        },
+      },
+      {
+        path: '/emails',
+        lazy: async () => {
+          const { EmailsPage } = await import('../features/emails/EmailsPage');
+          return { Component: EmailsPage };
+        },
+      },
+      {
+        path: '/templates',
+        lazy: async () => {
+          const { TemplatesPage } = await import('../features/templates/TemplatesPage');
+          return { Component: TemplatesPage };
+        },
+      },
+      {
+        path: '/analytics',
+        lazy: async () => {
+          const { AnalyticsPage } = await import('../features/analytics/AnalyticsPage');
+          return { Component: AnalyticsPage };
+        },
+      },
+      {
         path: '/generate',
         lazy: async () => {
           const { OutputTypePage } = await import('../features/generate/OutputTypePage');
@@ -113,6 +155,20 @@ export const router = createBrowserRouter([
         lazy: async () => {
           const { CoverLetterResultPage } = await import('../features/results/CoverLetterResultPage');
           return { Component: CoverLetterResultPage };
+        },
+      },
+      {
+        path: '/results/all/:applicationId',
+        lazy: async () => {
+          const { AllResultPage } = await import('../features/results/AllResultPage');
+          return { Component: AllResultPage };
+        },
+      },
+      {
+        path: '/applications/:applicationId',
+        lazy: async () => {
+          const { ApplicationDetailPage } = await import('../features/results/ApplicationDetailPage');
+          return { Component: ApplicationDetailPage };
         },
       },
     ],

@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { selectMonth } from './helpers/formControls';
 
 /**
  * End-to-end coverage for the complete-profile feature: an 8-step onboarding wizard
@@ -34,32 +35,37 @@ test('complete profile: onboarding, persistence, editing, logout/login, generati
     await page.fill('#fullName', 'Ada Lovelace');
     await page.fill('#headline', 'Platform Engineer');
     await page.fill('#email', email);
+    // "Save & continue" both saves and advances (PersonalInfoForm's afterSave callback) —
+    // there is no separate "Continue" button on this step.
     await page.getByRole('button', { name: 'Save & continue' }).click();
-    await expect(page.getByRole('button', { name: 'Continue', exact: true })).toBeVisible();
-    await page.getByRole('button', { name: 'Continue', exact: true }).click();
+    await expect(page.getByText('Education')).toBeVisible();
   });
 
   await test.step('onboarding: education', async () => {
+    // Education starts collapsed behind "+ Add Education" — open it before the form fields exist.
+    await page.getByRole('button', { name: '+ Add Education' }).click();
     await page.fill('#institution', 'MIT');
-    await page.fill('#degree', 'BSc');
-    await page.fill('#field', 'Computer Science');
-    await page.fill('#start', '2015-09');
-    await page.fill('#end', '2019-06');
+    await page.getByLabel('Degree').selectOption("Bachelor's — B.Sc.");
+    await page.getByLabel('Field of study').selectOption('Computer Science');
+    await selectMonth(page, 'Start', '2015-09');
+    await selectMonth(page, 'End', '2019-06');
     await page.getByRole('button', { name: 'Add education' }).click();
-    await expect(page.getByText('EDU-001')).toBeVisible();
-    await page.getByRole('button', { name: 'Continue', exact: true }).click();
+    // The education card shows formatted content (degree/institution), not a raw evidence id.
+    await expect(page.getByText('MIT', { exact: false })).toBeVisible();
+    // Once a record exists, StepNav's button reads "Save & continue" (not a bare "Continue").
+    await page.getByRole('button', { name: 'Save & continue' }).click();
   });
 
   await test.step('onboarding: experience', async () => {
     await page.fill('#company', 'Northwind Logistics');
     await page.fill('#title', 'Backend Engineer');
-    await page.fill('#start', '2021-03');
-    await page.fill('#end', '2024-01');
+    await selectMonth(page, 'Start', '2021-03');
+    await selectMonth(page, 'End', '2024-01');
     await page.fill('#bullets', 'Built order-processing services\nReduced latency by 60%');
     await page.fill('#technologies', 'Java, Kubernetes');
     await page.getByRole('button', { name: 'Add experience' }).click();
     await expect(page.getByText('EXP-001')).toBeVisible();
-    await page.getByRole('button', { name: 'Continue', exact: true }).click();
+    await page.getByRole('button', { name: 'Save & continue' }).click();
   });
 
   await test.step('onboarding: skills', async () => {
@@ -67,7 +73,7 @@ test('complete profile: onboarding, persistence, editing, logout/login, generati
     await page.fill('#category', 'DevOps');
     await page.getByRole('button', { name: 'Add skill' }).click();
     await expect(page.getByText('DevOps')).toBeVisible();
-    await page.getByRole('button', { name: 'Continue', exact: true }).click();
+    await page.getByRole('button', { name: 'Save & continue' }).click();
   });
 
   await test.step('onboarding: projects', async () => {
@@ -75,7 +81,7 @@ test('complete profile: onboarding, persistence, editing, logout/login, generati
     await page.fill('#description', 'Open-source issue tracker.');
     await page.getByRole('button', { name: 'Add project' }).click();
     await expect(page.getByText('PROJ-001')).toBeVisible();
-    await page.getByRole('button', { name: 'Continue', exact: true }).click();
+    await page.getByRole('button', { name: 'Save & continue' }).click();
   });
 
   await test.step('onboarding: certifications', async () => {
@@ -83,14 +89,14 @@ test('complete profile: onboarding, persistence, editing, logout/login, generati
     await page.fill('#issuer', 'AWS');
     await page.getByRole('button', { name: 'Add certification' }).click();
     await expect(page.getByText('CERT-001')).toBeVisible();
-    await page.getByRole('button', { name: 'Continue', exact: true }).click();
+    await page.getByRole('button', { name: 'Save & continue' }).click();
   });
 
   await test.step('onboarding: achievements', async () => {
     await page.fill('#title', 'Hackathon Winner 2022');
     await page.getByRole('button', { name: 'Add achievement' }).click();
     await expect(page.getByText('ACH-001')).toBeVisible();
-    await page.getByRole('button', { name: 'Continue', exact: true }).click();
+    await page.getByRole('button', { name: 'Save & continue' }).click();
   });
 
   await test.step('onboarding: review shows 100% and finishing lands on landing, not /apply or /evidence', async () => {
@@ -109,13 +115,14 @@ test('complete profile: onboarding, persistence, editing, logout/login, generati
     }
 
     await page.reload();
-    for (const text of ['MIT', 'Northwind Logistics', 'EXP-001']) {
+    for (const text of ['MIT', 'Northwind Logistics']) {
       await expect(page.getByText(text).first()).toBeVisible();
     }
   });
 
   await test.step('logging out from a protected page (/profile) lands on the landing page, not /login', async () => {
-    await page.getByRole('button', { name: 'Log out' }).first().click();
+    await page.getByRole('button', { name: 'Account menu' }).first().click();
+    await page.getByRole('menuitem', { name: 'Log out' }).click();
     await page.waitForURL('/');
     await expect(page).toHaveURL('/');
   });
@@ -132,8 +139,8 @@ test('complete profile: onboarding, persistence, editing, logout/login, generati
   await test.step('resume generation still works with the enriched evidence inventory', async () => {
     await page.getByRole('link', { name: 'Generate' }).first().click();
     await page.waitForURL('**/generate');
-    await page.getByRole('button', { name: /Resume/ }).click();
-    await page.waitForURL('**/generate/job');
+    await page.getByRole('button', { name: /^Resume/ }).click();
+    await page.waitForURL('**/generate/job**');
 
     await page.fill(
       '#jobDescriptionText',

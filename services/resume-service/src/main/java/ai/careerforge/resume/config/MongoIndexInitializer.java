@@ -33,6 +33,8 @@ public class MongoIndexInitializer implements ApplicationRunner {
                 new CompoundIndexDefinition(new Document("type", 1).append("status", 1)));
         mongoTemplate.indexOps("templates").ensureIndex(
                 new CompoundIndexDefinition(new Document("source", 1).append("ownerUserId", 1)));
+        mongoTemplate.indexOps("templates").ensureIndex(
+                new CompoundIndexDefinition(new Document("ownerUserId", 1).append("type", 1).append("status", 1).append("createdAt", -1)));
 
         log.info("resume-service Mongo indexes ensured");
     }

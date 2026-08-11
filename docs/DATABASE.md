@@ -5,7 +5,10 @@ layer — no JPA, no Hibernate, no Flyway, no MySQL (ADR-001).
 
 **Current state:** ownership, models and indexes are specified below; collections are
 created by their owning service as it is implemented. Real, live in Atlas today: `auth.users`
-+ `refresh_tokens`, `profile.profiles` (all six evidence sections — personal info,
++ `refresh_tokens` + `oauth_accounts` + `security_events` (Google OAuth sign-in — only
+`OAUTH_LINKED` writes to `security_events` today; `LOGIN_SUCCESS`/`LOGIN_FAILURE`/
+`REFRESH_REUSE` are documented but not yet wired into the pre-existing password flow),
+`profile.profiles` (all six evidence sections — personal info,
 education, experience, skills, projects, certifications, achievements — plus
 `evidenceSequences`; `profile_versions` is still planned), `jd.job_descriptions` +
 `jd_versions` + `jd_analyses` (text and SSRF-guarded URL intake — ADR-015),

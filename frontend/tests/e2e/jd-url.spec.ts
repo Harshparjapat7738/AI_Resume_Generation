@@ -20,11 +20,13 @@ async function loginFreshUserAtJobDescriptionStep(page: import('@playwright/test
 
   // Minimal profile: just enough to reach the generate flow. Fill personal, skip the rest.
   await page.fill('#fullName', 'JD URL Tester');
+  // "Save & continue" both saves and advances (PersonalInfoForm's afterSave callback) —
+  // there is no separate "Continue" button on this step, so we land on Education already.
   await page.getByRole('button', { name: 'Save & continue' }).click();
-  await expect(page.getByRole('button', { name: 'Continue', exact: true })).toBeVisible();
-  // 7 forward clicks: Personal(0)->Education->Experience->Skills->Projects->
-  // Certifications->Achievements->Review(7).
-  for (let i = 0; i < 7; i++) {
+  await expect(page.getByText('Education')).toBeVisible();
+  // 6 forward clicks: Education->Experience->Skills->Projects->Certifications->
+  // Achievements->Review.
+  for (let i = 0; i < 6; i++) {
     await page.getByRole('button', { name: /Continue|Skip/ }).first().click();
   }
   await page.getByRole('button', { name: 'Finish profile' }).click();
@@ -32,8 +34,8 @@ async function loginFreshUserAtJobDescriptionStep(page: import('@playwright/test
 
   await page.getByRole('link', { name: 'Generate' }).first().click();
   await page.waitForURL('**/generate');
-  await page.getByRole('button', { name: /Resume/ }).click();
-  await page.waitForURL('**/generate/job');
+  await page.getByRole('button', { name: /^Resume/ }).click();
+  await page.waitForURL('**/generate/job**');
   await page.getByRole('button', { name: 'Job URL' }).click();
 }
 

@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { selectMonth } from './helpers/formControls';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -23,12 +24,9 @@ async function loginFreshUserAtResult(page: import('@playwright/test').Page, ema
 
   await page.fill('#fullName', 'PDF Tester');
   await page.fill('#headline', 'Backend Engineer');
-  // "Save & continue" only saves (PersonalInfoForm's own submit) — advancing the wizard
-  // step is a separate, synchronous "Continue"/"Skip for now" button next to it
-  // (OnboardingPage's own goNext handler, not tied to the save request at all), so it's
-  // always safe to click right after.
+  // "Save & continue" both saves and advances (PersonalInfoForm's afterSave callback calls
+  // goNext() itself) — this step alone has no separate "Continue"/"Skip" button next to it.
   await page.getByRole('button', { name: 'Save & continue' }).click();
-  await page.getByRole('button', { name: /Continue|Skip/ }).first().click();
 
   // Education — skip (StepNav's own Continue/Skip, synchronous). exact:true avoids matching
   // the "Add education" sub-heading below it (a substring match on "education").
@@ -39,13 +37,13 @@ async function loginFreshUserAtResult(page: import('@playwright/test').Page, ema
   await expect(page.getByRole('heading', { name: 'What have you actually done?' })).toBeVisible();
   await page.fill('#company', 'Acme Corp');
   await page.fill('#title', 'Backend Engineer');
-  await page.fill('#start', '2021-03');
-  await page.fill('#end', '2024-01');
+  await selectMonth(page, 'Start', '2021-03');
+  await selectMonth(page, 'End', '2024-01');
   await page.fill('#bullets', 'Built order-processing services\nReduced latency by 60%');
   await page.fill('#technologies', 'Java, Spring Boot');
   await page.getByRole('button', { name: 'Add experience' }).click();
   await expect(page.getByText('EXP-001')).toBeVisible();
-  await page.getByRole('button', { name: 'Continue', exact: true }).click();
+  await page.getByRole('button', { name: 'Save & continue' }).click();
 
   // Skills, Projects, Certifications, Achievements — skip the rest, waiting for each
   // step's own heading before clicking past it.
@@ -59,8 +57,8 @@ async function loginFreshUserAtResult(page: import('@playwright/test').Page, ema
 
   await page.getByRole('link', { name: 'Generate' }).first().click();
   await page.waitForURL('**/generate');
-  await page.getByRole('button', { name: /Resume/ }).click();
-  await page.waitForURL('**/generate/job');
+  await page.getByRole('button', { name: /^Resume/ }).click();
+  await page.waitForURL('**/generate/job**');
 
   await page.fill(
     '#jobDescriptionText',

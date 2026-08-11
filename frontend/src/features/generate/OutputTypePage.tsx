@@ -33,9 +33,9 @@ const cards = [
   {
     id: 'ALL' satisfies GenerationType,
     title: 'Generate All',
-    description: 'Resume, cover letter and email together.',
+    description: 'Resume, cover letter and email together, in one application.',
     icon: SparkleIcon,
-    available: false,
+    available: true,
   },
 ] as const;
 
@@ -46,7 +46,7 @@ export function OutputTypePage() {
     <GenerateLayout
       activeStep={0}
       title="What do you want to generate?"
-      subtitle="Resume, cover letter and email generation are available today. Combined generation is coming soon."
+      subtitle="Resume, cover letter and email generation are all available today — separately or together."
     >
       <div className="grid gap-4 sm:grid-cols-2">
         {cards.map((card) => {

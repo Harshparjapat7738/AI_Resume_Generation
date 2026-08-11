@@ -84,6 +84,24 @@ public class Application {
     @Field("failureCode")
     private String failureCode;
 
+    /**
+     * Per-output failure reasons for {@code GenerationType.ALL} (and, harmlessly, any other
+     * type): {@code resumeVersionId}/{@code coverLetterVersionId}/{@code emailId} being null
+     * already distinguishes "not generated" from "generated", but not "never attempted" from
+     * "attempted and failed", and never carries a reason. These three are cleared the moment
+     * their output attaches successfully and are the only thing a client needs to render
+     * "Resume &#10003; | Cover Letter &#10003; | Email &#10007; — generation failed" and to
+     * survive a refresh — see {@link #recordOutputFailure}.
+     */
+    @Field("resumeError")
+    private String resumeError;
+
+    @Field("coverLetterError")
+    private String coverLetterError;
+
+    @Field("emailError")
+    private String emailError;
+
     @CreatedDate
     @Field("createdAt")
     private Instant createdAt;
@@ -163,6 +181,18 @@ public class Application {
         return failureCode;
     }
 
+    public String resumeError() {
+        return resumeError;
+    }
+
+    public String coverLetterError() {
+        return coverLetterError;
+    }
+
+    public String emailError() {
+        return emailError;
+    }
+
     public Instant createdAt() {
         return createdAt;
     }
@@ -177,6 +207,7 @@ public class Application {
         this.resumeVersionId = resumeVersionId;
         this.assessed = assessed;
         this.failureCode = null;
+        this.resumeError = null;
         this.status = deriveStatus();
     }
 
@@ -185,6 +216,7 @@ public class Application {
     public void attachEmail(String emailId) {
         this.emailId = emailId;
         this.failureCode = null;
+        this.emailError = null;
         this.status = deriveStatus();
     }
 
@@ -193,16 +225,37 @@ public class Application {
     public void attachCoverLetter(String coverLetterVersionId) {
         this.coverLetterVersionId = coverLetterVersionId;
         this.failureCode = null;
+        this.coverLetterError = null;
         this.status = deriveStatus();
     }
 
     /**
+     * Records why one specific output failed to generate — used by {@code GenerationType.ALL}
+     * (and harmlessly usable by any type) so a failed output is independently visible and
+     * independently retryable, without the whole {@link Application} being marked
+     * {@link ApplicationStatus#FAILED}: {@link #status} keeps following {@link #deriveStatus()}
+     * exactly as before (this method never changes it), so the other outputs can still
+     * complete and {@code COMPLETED} still requires every output this generation type needs —
+     * see {@link #deriveStatus()}.
+     *
+     * @param output one of {@code "resume"}, {@code "coverLetter"}, {@code "email"}
+     */
+    public void recordOutputFailure(String output, String reason) {
+        switch (output) {
+            case "resume" -> this.resumeError = reason;
+            case "coverLetter" -> this.coverLetterError = reason;
+            case "email" -> this.emailError = reason;
+            default -> throw new IllegalArgumentException("Unknown output: " + output);
+        }
+    }
+
+    /**
      * Whether every artifact {@link #generationType} requires now exists. {@code RESUME_ONLY}
-     * needs only the resume; {@code EMAIL_ONLY} needs only the email; {@code ALL} would need
-     * every artifact once cover-letter generation exists too (not implemented — see
-     * {@link GenerationType}). Reaching {@code COMPLETED} for a type this build doesn't
-     * generate is therefore never possible, by construction, without a caller directly
-     * attaching that artifact's reference.
+     * needs only the resume; {@code EMAIL_ONLY} needs only the email; {@code COVER_LETTER_ONLY}
+     * needs only the letter; {@code ALL} needs every one of the three — so it can only reach
+     * {@code COMPLETED} once resume, cover letter and email have each attached successfully,
+     * however many attempts and retries that took (see {@link #recordOutputFailure}, which
+     * never touches {@link #status} itself).
      */
     private ApplicationStatus deriveStatus() {
         boolean resumeSatisfied = resumeVersionId != null;

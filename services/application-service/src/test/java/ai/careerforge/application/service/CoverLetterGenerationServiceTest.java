@@ -171,6 +171,24 @@ class CoverLetterGenerationServiceTest {
         }
 
         @Test
+        @DisplayName("GenerationType.ALL (\"Generate All\") is allowed to generate a cover letter, not just COVER_LETTER_ONLY")
+        void allowsGenerationTypeAll() throws Exception {
+            Application all = new Application(USER_ID, JD_ID, "Backend Engineer", "Acme", GenerationType.ALL, null);
+            when(applications.findByIdAndUserId(APP_ID, USER_ID)).thenReturn(Optional.of(all));
+            when(profileServiceClient.getEvidence()).thenReturn(List.of(sampleEvidence()));
+            when(aiServiceClient.selectEvidence(any())).thenReturn(selectionResponse());
+            when(aiServiceClient.generateCoverLetter(any())).thenReturn(coverLetterResponse());
+
+            CoverLetterVersion result = service.generate(USER_ID, APP_ID);
+
+            assertThat(result).isNotNull();
+            assertThat(all.coverLetterVersionId()).isEqualTo(result.id());
+            // ALL needs resume + email too — attaching just the letter must not prematurely
+            // mark the whole application COMPLETED (Application.deriveStatus).
+            assertThat(all.status().name()).isEqualTo("PROCESSING");
+        }
+
+        @Test
         void rejectsAnUnconfirmedJobDescription() {
             when(jdServiceClient.getAnalysis(JD_ID)).thenThrow(conflict());
             when(profileServiceClient.getEvidence()).thenReturn(List.of(sampleEvidence()));

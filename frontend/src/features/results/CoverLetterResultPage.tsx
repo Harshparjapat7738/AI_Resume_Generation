@@ -19,7 +19,7 @@ import type { CoverLetterVersion } from '@/services/applicationApi';
  * whatever survived, and {@code removedParagraphs} discloses the gap honestly instead of
  * papering over it with invented text.
  */
-function letterText(content: CoverLetterVersion['content']): string {
+export function letterText(content: CoverLetterVersion['content']): string {
   const parts: string[] = [];
   if (content.greeting) parts.push(content.greeting);
   if (content.openingParagraph?.text) parts.push(content.openingParagraph.text);

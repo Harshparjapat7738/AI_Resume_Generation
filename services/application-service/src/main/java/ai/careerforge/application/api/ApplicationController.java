@@ -2,6 +2,7 @@ package ai.careerforge.application.api;
 
 import ai.careerforge.application.api.dto.ApplicationRequests.AttachResumeRequest;
 import ai.careerforge.application.api.dto.ApplicationRequests.CreateApplicationRequest;
+import ai.careerforge.application.api.dto.ApplicationRequests.RecordOutputFailureRequest;
 import ai.careerforge.application.api.dto.ApplicationRequests.UpdateStatusRequest;
 import ai.careerforge.application.api.dto.ApplicationResponses.ApplicationResponse;
 import ai.careerforge.application.api.dto.ApplicationResponses.ApplicationSummaryResponse;
@@ -80,6 +81,24 @@ public class ApplicationController {
         return ResponseEntity.ok(toResponse(applicationService.requireOwned(userId, id)));
     }
 
+    /**
+     * Records that one output of this application's generation failed — used by the
+     * {@code GenerationType.ALL} ("Generate All") flow, where resume/cover-letter/email are
+     * each generated independently and a failure in one must not block, hide, or be confused
+     * with the others. {@code output} is one of {@code resume}, {@code coverLetter}, {@code
+     * email}. Persisting this (rather than only surfacing the failed call's own error to the
+     * caller) is what lets a page refresh still show exactly which output failed and why —
+     * the same reason {@code resumeVersionId}/{@code coverLetterVersionId}/{@code emailId}
+     * already survive a refresh.
+     */
+    @PostMapping("/{id}/outputs/{output}/failed")
+    public ResponseEntity<ApplicationResponse> recordOutputFailure(
+            @CallerId String userId, @PathVariable String id, @PathVariable String output,
+            @Valid @RequestBody RecordOutputFailureRequest request) {
+        Application application = applicationService.recordOutputFailure(userId, id, output, request.reason());
+        return ResponseEntity.ok(toResponse(application));
+    }
+
     /** Paged history for the /dashboard screen; optionally filtered by lifecycle status. */
     @GetMapping
     public ResponseEntity<PageResponse<ApplicationSummaryResponse>> list(
@@ -145,7 +164,10 @@ public class ApplicationController {
     private static ApplicationSummaryResponse toSummary(Application application) {
         return new ApplicationSummaryResponse(
                 application.id(), application.jobDescriptionId(), application.jobTitle(), application.company(),
-                application.generationType(), application.status(), application.createdAt());
+                application.generationType(), application.templateId(), application.status(),
+                application.resumeVersionId(), application.coverLetterVersionId(), application.emailId(),
+                application.resumeError(), application.coverLetterError(), application.emailError(),
+                application.createdAt());
     }
 
     private static ApplicationResponse toResponse(Application application) {
@@ -153,7 +175,9 @@ public class ApplicationController {
                 application.id(), application.jobDescriptionId(), application.jobTitle(), application.company(),
                 application.generationType(), application.templateId(), application.resumeVersionId(),
                 application.coverLetterVersionId(), application.emailId(), application.assessed(),
-                application.status(), application.failureCode(), application.createdAt(), application.updatedAt());
+                application.status(), application.failureCode(),
+                application.resumeError(), application.coverLetterError(), application.emailError(),
+                application.createdAt(), application.updatedAt());
     }
 
     @SuppressWarnings("unchecked")

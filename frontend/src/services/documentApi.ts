@@ -35,3 +35,21 @@ export function getRenderedDocument(resumeVersionId: string): Promise<RenderedDo
 export function downloadDocument(documentId: string): Promise<Blob> {
   return apiFetchBlob(`/api/documents/${documentId}/download`);
 }
+
+/**
+ * Mail-merges a custom-uploaded template with a real, already-generated resume version's
+ * content — the DOCX-preserving path custom templates use instead of the built-in Thymeleaf/
+ * PDF pipeline (see document-service's DocxMailMerge). Returns the same shape as
+ * {@link renderResumePdf} — `format` is `"DOCX"` — so the exact same {@link downloadDocument}
+ * call downloads it.
+ */
+export function generateFromCustomTemplate(
+  templateId: string,
+  resumeVersionId: string,
+  fieldMappings: Record<string, string>,
+): Promise<RenderedDocument> {
+  return apiFetch<RenderedDocument>(`/api/documents/custom-templates/${templateId}/generate`, {
+    method: 'POST',
+    body: JSON.stringify({ resumeVersionId, fieldMappings }),
+  });
+}

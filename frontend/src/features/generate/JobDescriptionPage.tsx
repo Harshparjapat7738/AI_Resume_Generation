@@ -32,6 +32,11 @@ export function JobDescriptionPage() {
   // TemplatePage later carries templateId to ProcessingPage. Defaults to the resume flow so a
   // direct/bookmarked link to this page keeps working exactly as before.
   const generationType = searchParams.get('type') ?? 'RESUME_ONLY';
+  // Optional — set only when arriving from the Templates page's "Use this template" action, so
+  // TemplatePage can preselect it instead of the user having to pick it again. Just forwarded
+  // along here, same as `type`; this page has no template UI of its own.
+  const preselectedTemplateId = searchParams.get('templateId');
+  const templateParam = preselectedTemplateId ? `&templateId=${preselectedTemplateId}` : '';
   const [tab, setTab] = useState<'paste' | 'url'>('paste');
   const [submitError, setSubmitError] = useState<unknown>(null);
   const [urlError, setUrlError] = useState<unknown>(null);
@@ -45,7 +50,7 @@ export function JobDescriptionPage() {
     setSubmitError(null);
     try {
       const jd = await submitJd(values.jobDescriptionText);
-      navigate(`/generate/review/${jd.id}?type=${generationType}`);
+      navigate(`/generate/review/${jd.id}?type=${generationType}${templateParam}`);
     } catch (error) {
       setSubmitError(error);
     }
@@ -55,7 +60,7 @@ export function JobDescriptionPage() {
     setUrlError(null);
     try {
       const jd = await fetchJdFromUrl(values.url);
-      navigate(`/generate/review/${jd.id}?type=${generationType}`);
+      navigate(`/generate/review/${jd.id}?type=${generationType}${templateParam}`);
     } catch (error) {
       setUrlError(error);
     }

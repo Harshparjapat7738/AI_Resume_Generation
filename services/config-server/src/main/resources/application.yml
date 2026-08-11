@@ -5,7 +5,15 @@ spring:
   application:
     name: config-server
   profiles:
-    active: native
+    # `include` (not `active`): the native backend requires the "native" profile to be
+    # active no matter what — but `active` set here is fully replaced (not merged) by an
+    # externally-supplied SPRING_PROFILES_ACTIVE (e.g. docker-compose's shared
+    # x-service-env sets it to "docker" for every service), which would silently disable
+    # the native backend and fall through to Spring Cloud Config Server's git default —
+    # exactly the "you need to configure a uri for the git repository" failure ADR-011
+    # exists to avoid. `include` is additive from every source, so "native" stays active
+    # regardless of what else is set.
+    include: native
   cloud:
     config:
       server:

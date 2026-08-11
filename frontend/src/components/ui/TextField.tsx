@@ -17,7 +17,7 @@ export const TextField = forwardRef<HTMLInputElement, TextFieldProps>(function T
       <input
         ref={ref}
         id={fieldId}
-        className={`mt-2 w-full rounded-xl border bg-surface px-4 py-2.5 text-sm text-ink placeholder:text-ink-faint focus:outline-none focus:ring-2 focus:ring-ember-soft/40 ${
+        className={`mt-2 w-full rounded-xl border bg-surface px-4 py-2.5 text-sm text-ink placeholder:text-ink-faint transition-colors focus:outline-none focus:ring-2 focus:ring-ember-soft/40 ${
           error ? 'border-rose' : 'border-border'
         } ${className ?? ''}`}
         aria-invalid={Boolean(error)}

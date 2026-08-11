@@ -34,6 +34,9 @@ public class MongoIndexInitializer implements ApplicationRunner {
 
         mongoTemplate.indexOps("rendered_documents").ensureIndex(new Index("objectKey", Direction.ASC).unique());
 
+        mongoTemplate.indexOps("custom_template_assets").ensureIndex(new Index("userId", Direction.ASC));
+        mongoTemplate.indexOps("custom_template_assets").ensureIndex(new Index("objectKey", Direction.ASC).unique());
+
         log.info("document-service Mongo indexes ensured");
     }
 }
