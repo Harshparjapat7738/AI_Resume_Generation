@@ -111,15 +111,15 @@ export const router = createBrowserRouter([
       {
         path: '/generate/job',
         lazy: async () => {
-          const { JobDescriptionPage } = await import('../features/generate/JobDescriptionPage');
-          return { Component: JobDescriptionPage };
+          const { GenerationJobDescriptionPage } = await import('../features/generate/GenerationJobDescriptionPage');
+          return { Component: GenerationJobDescriptionPage };
         },
       },
       {
         path: '/generate/review/:jdId',
         lazy: async () => {
-          const { ReviewPage } = await import('../features/generate/ReviewPage');
-          return { Component: ReviewPage };
+          const { GenerationReviewPage } = await import('../features/generate/GenerationReviewPage');
+          return { Component: GenerationReviewPage };
         },
       },
       {

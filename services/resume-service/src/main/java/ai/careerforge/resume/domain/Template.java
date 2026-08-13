@@ -52,9 +52,9 @@ public class Template {
     private String ownerUserId;
 
     /** Formats document-service can render for this template. Built-ins: PDF (and DOCX once
-     *  the generic pipeline covers them too). Custom uploads: DOCX only — see
-     *  ARCHITECTURE_DECISIONS.md's custom-template note on why exact-layout PDF re-authoring
-     *  isn't attempted. */
+     *  the generic pipeline covers them too). Custom uploads: whichever single format the
+     *  owner actually uploaded, DOCX or PDF (ADR-023) — the output format always matches the
+     *  source template's own format, never converted between the two. */
     @Field("supportedFormats")
     private List<String> supportedFormats;
 
@@ -114,12 +114,15 @@ public class Template {
     }
 
     /** For a newly-uploaded custom template — id is the shared id document-service's asset
-     *  record was created with (see {@code TemplateService#uploadCustom}). */
+     *  record was created with (see {@code TemplateService#uploadCustom}). {@code format} is
+     *  document-service's own real answer ({@code "DOCX"} or {@code "PDF"}, ADR-023) — never
+     *  assumed, since a custom upload is exactly as likely to be either now. */
     public static Template forCustomUpload(String id, String userId, String name, TemplateType type,
-                                            String originalFilename, Map<String, Object> structure,
+                                            String originalFilename, String format, Map<String, Object> structure,
                                             List<Map<String, Object>> detectedFields, Map<String, String> suggestedMapping) {
         Template template = new Template(id, name, "Custom template uploaded by you.", null, type, "1",
-                TemplateStatus.ACTIVE, TemplateSource.CUSTOM_UPLOAD, userId, List.of("DOCX"), false);
+                TemplateStatus.ACTIVE, TemplateSource.CUSTOM_UPLOAD, userId,
+                List.of(format == null ? "DOCX" : format), false);
         template.originalFilename = originalFilename;
         template.structure = structure;
         template.detectedFields = detectedFields;

@@ -76,7 +76,7 @@ public class CustomTemplateAssetController {
 
     private static CustomTemplateAssetResponse toResponse(CustomTemplateAsset asset) {
         return new CustomTemplateAssetResponse(
-                asset.id(), asset.originalFilename(), asset.byteSize(), asset.sha256(),
+                asset.id(), asset.originalFilename(), asset.format().name(), asset.byteSize(), asset.sha256(),
                 toStructureResponse(asset.structure()),
                 asset.detectedFields().stream()
                         .map(CustomTemplateAssetController::toFieldResponse)
@@ -87,13 +87,16 @@ public class CustomTemplateAssetController {
     private static TemplateStructureResponse toStructureResponse(TemplateStructure s) {
         if (s == null) return null;
         return new TemplateStructureResponse(
-                s.pageWidthTwips(), s.pageHeightTwips(), s.marginTopTwips(), s.marginBottomTwips(),
-                s.marginLeftTwips(), s.marginRightTwips(), s.columnCount(), s.fontsUsed(), s.fontSizesPt(),
-                s.colorsUsedHex(), s.alignmentsUsed(), s.headingsFound(), s.paragraphCount(), s.tableCount(),
-                s.hasHeader(), s.hasFooter());
+                s.sourceType().name(), s.pageWidthTwips(), s.pageHeightTwips(), s.marginTopTwips(),
+                s.marginBottomTwips(), s.marginLeftTwips(), s.marginRightTwips(), s.columnCount(),
+                s.paragraphCount(), s.tableCount(), s.hasHeader(), s.hasFooter(), s.pageCount(),
+                s.pageWidthPt(), s.pageHeightPt(), s.fontsUsed(), s.fontSizesPt(), s.colorsUsedHex(),
+                s.alignmentsUsed(), s.headingsFound());
     }
 
     private static DetectedFieldResponse toFieldResponse(DetectedField f) {
-        return new DetectedFieldResponse(f.token(), f.context(), f.suggestedField());
+        return new DetectedFieldResponse(f.token(), f.context(), f.suggestedField(),
+                f.pdfPage(), f.pdfX(), f.pdfY(), f.pdfWidth(), f.pdfHeight(), f.pdfFontSizePt(),
+                f.pdfFontName(), f.pdfColorHex());
     }
 }

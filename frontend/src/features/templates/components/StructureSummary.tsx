@@ -1,18 +1,28 @@
 import type { TemplateStructure } from '@/services/templateApi';
 
 const TWIPS_PER_INCH = 1440;
+const POINTS_PER_INCH = 72;
 
 function inches(twips: number | null): string | null {
   return twips === null ? null : `${(twips / TWIPS_PER_INCH).toFixed(2)}"`;
 }
 
+function inchesFromPt(pt: number | null): string | null {
+  return pt === null ? null : `${(pt / POINTS_PER_INCH).toFixed(2)}"`;
+}
+
 /** Renders the real structural facts document-service's analyzer extracted from an uploaded
- *  .docx — the honest substitute for a rendered visual preview (see TemplatesPage's own
- *  comment on why a true WYSIWYG DOCX preview isn't built: no DOCX→image/PDF converter exists
- *  in this stack). Every value here came straight off the file's own OOXML; nothing is
- *  invented. Shared by the upload wizard's review step and the "Preview" action on an
- *  already-saved template. */
+ *  template — the honest substitute for a rendered visual preview (see TemplatesPage's own
+ *  comment on why a true WYSIWYG preview isn't built: no document→image converter exists in
+ *  this stack). Every value here came straight off the file itself — OOXML for DOCX, the PDF's
+ *  own page/content-stream facts for PDF (ADR-023) — nothing is invented, and the two formats'
+ *  genuinely different fact sets are never conflated. Shared by the upload wizard's review step
+ *  and the "Preview" action on an already-saved template. */
 export function StructureSummary({ structure }: { structure: TemplateStructure }) {
+  if (structure.sourceType === 'PDF') {
+    return <PdfStructureSummary structure={structure} />;
+  }
+
   const pageSize = inches(structure.pageWidthTwips) && inches(structure.pageHeightTwips)
     ? `${inches(structure.pageWidthTwips)} × ${inches(structure.pageHeightTwips)}`
     : 'Not detected';
@@ -34,7 +44,33 @@ export function StructureSummary({ structure }: { structure: TemplateStructure }
         <Fact label="Tables" value={String(structure.tableCount)} />
         <Fact label="Header / Footer" value={`${structure.hasHeader ? 'Yes' : 'No'} / ${structure.hasFooter ? 'Yes' : 'No'}`} />
       </div>
+      <StructureFontFacts structure={structure} />
+    </div>
+  );
+}
 
+/** A PDF has no OOXML section properties, paragraph/run model or header/footer relationships to
+ *  read — only page geometry and content-stream facts (ADR-023) — so this shows a genuinely
+ *  different, PDF-native fact set rather than approximating the DOCX one. */
+function PdfStructureSummary({ structure }: { structure: TemplateStructure }) {
+  const pageSize = inchesFromPt(structure.pageWidthPt) && inchesFromPt(structure.pageHeightPt)
+    ? `${inchesFromPt(structure.pageWidthPt)} × ${inchesFromPt(structure.pageHeightPt)}`
+    : 'Not detected';
+
+  return (
+    <div className="space-y-4">
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+        <Fact label="Pages" value={String(structure.pageCount ?? 'Not detected')} />
+        <Fact label="Page size" value={pageSize} />
+      </div>
+      <StructureFontFacts structure={structure} />
+    </div>
+  );
+}
+
+function StructureFontFacts({ structure }: { structure: TemplateStructure }) {
+  return (
+    <>
       {structure.fontsUsed.length > 0 && (
         <div>
           <p className="text-xs font-semibold uppercase tracking-wide text-ink-faint">Fonts</p>
@@ -80,7 +116,7 @@ export function StructureSummary({ structure }: { structure: TemplateStructure }
           </ul>
         </div>
       )}
-    </div>
+    </>
   );
 }
 

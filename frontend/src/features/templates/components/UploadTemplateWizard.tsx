@@ -79,8 +79,9 @@ export function UploadTemplateWizard({
       setFile(null);
       return;
     }
-    if (!selected.name.toLowerCase().endsWith('.docx')) {
-      setFileError('Only Word (.docx) files are supported today.');
+    const lower = selected.name.toLowerCase();
+    if (!lower.endsWith('.docx') && !lower.endsWith('.pdf')) {
+      setFileError('Only Word (.docx) or PDF (.pdf) files are supported.');
       setFile(null);
       return;
     }
@@ -125,26 +126,36 @@ export function UploadTemplateWizard({
           {step === 'file' && (
             <div className="space-y-4">
               <p className="text-sm text-ink-muted">
-                Upload a Word (.docx) resume, cover letter or email template. Add placeholders like{' '}
+                Upload a Word (.docx) or PDF resume, cover letter or email template. Add placeholders like{' '}
                 <code className="rounded bg-surface-2 px-1 py-0.5 text-xs">{'{{name}}'}</code> or{' '}
                 <code className="rounded bg-surface-2 px-1 py-0.5 text-xs">{'{{summary}}'}</code> anywhere you want
                 your real content to appear — CareerForge fills them in without touching the rest of your design.
+                For a PDF template, placeholders must be real, selectable text (not part of a scanned image).
               </p>
+              <p className="text-xs text-ink-faint">Supported formats: DOCX, PDF</p>
               <label className="flex cursor-pointer flex-col items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-border-strong px-6 py-10 text-center transition-colors hover:border-ink-muted">
                 <input
                   ref={fileInputRef}
                   type="file"
-                  accept=".docx"
+                  accept=".docx,.pdf"
                   className="sr-only"
                   onChange={(e) => handleFileChange(e.target.files?.[0] ?? null)}
                 />
                 <span className="text-sm font-medium text-ink">
-                  {file ? file.name : 'Click to choose a .docx file'}
+                  {file ? file.name : 'Click to choose a .docx or .pdf file'}
                 </span>
                 <span className="text-xs text-ink-faint">
-                  {file ? `${(file.size / 1024).toFixed(0)} KB` : 'Word (.docx) only, up to 5 MB'}
+                  {file ? `${(file.size / 1024).toFixed(0)} KB` : 'Word (.docx) or PDF (.pdf), up to 5 MB'}
                 </span>
               </label>
+              {file && (
+                <p className="text-xs text-ink-faint">
+                  ✓ {file.name}
+                  <span className="ml-2 rounded-full border border-border-strong px-2 py-0.5 text-[11px] uppercase text-ink-muted">
+                    {file.name.toLowerCase().endsWith('.pdf') ? 'PDF' : 'DOCX'}
+                  </span>
+                </p>
+              )}
               {fileError && <ErrorBanner error={new Error(fileError)} />}
             </div>
           )}
@@ -175,6 +186,9 @@ export function UploadTemplateWizard({
 
           {step === 'mapping' && uploaded && (
             <div className="space-y-4">
+              <p className="text-xs font-medium text-mint">
+                ✓ {uploaded.structure?.sourceType === 'PDF' ? 'PDF' : 'DOCX'} template analyzed
+              </p>
               <p className="text-sm text-ink-muted">
                 CareerForge found {uploaded.detectedFields?.length ?? 0} placeholder
                 {(uploaded.detectedFields?.length ?? 0) === 1 ? '' : 's'} in your document. Review the suggested

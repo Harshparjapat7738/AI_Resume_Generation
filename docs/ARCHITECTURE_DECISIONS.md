@@ -29,6 +29,7 @@ implementation reality required a choice the blueprint did not make.
 | [ADR-020](#adr-020) | Cover-letter generation orchestrated from application-service, mirroring resume-service's two-stage pipeline | Accepted |
 | [ADR-021](#adr-021) | Google OAuth state/PKCE store is Redis, not an HTTP session; account linking trusts only a Google-verified email | Accepted |
 | [ADR-022](#adr-022) | "Generate All" is one `Application`, three independently-tracked outputs generated sequentially through the existing single-output pipelines | Accepted |
+| [ADR-023](#adr-023) | Custom templates gain PDF support and become selectable in the main generation wizard by dispatching the existing render endpoint, not by adding a second pipeline | Accepted |
 
 ---
 
@@ -1524,3 +1525,150 @@ letter → email) exactly.
   test suites (all 43 application-service tests still pass unmodified) and live, against the
   real stack, that an `EMAIL_ONLY` application still generates an email and a
   `COVER_LETTER_ONLY` application is still correctly rejected from generating one.
+
+---
+
+<a id="adr-023"></a>
+# ADR-023
+
+## Decision
+
+Custom templates (uploaded via `POST /api/resumes/templates/custom`, analyzed and stored by
+document-service — see `CustomTemplateAssetService`) gain a second accepted format, **PDF**,
+alongside the existing DOCX path, and become **selectable in the main `/generate` wizard**
+(`TemplatePage.tsx`) exactly like a built-in template — not only through the separate,
+standalone "Templates" page's "Use this template" action that was, until now, the only way to
+render one.
+
+Both changes reuse the existing architecture rather than adding to it:
+
+1. **PDF is analyzed and merged by new classes that mirror the DOCX ones exactly**
+   (`PdfStructureAnalyzer` mirrors `DocxStructureAnalyzer`; `PdfMailMerge` mirrors
+   `DocxMailMerge`), sharing the same `{{token}}` placeholder convention, the same
+   `CustomTemplateAsset`/`DetectedField`/`RenderedDocument` entities (extended with nullable
+   format-specific fields, the same pattern `Template` already uses for
+   BUILT_IN-vs-CUSTOM_UPLOAD-only fields), and the same `TemplateService`/`Template` catalogue
+   on the resume-service side — untouched. No second template system was created.
+2. **Making a custom template reachable from the main wizard required no new generation
+   pipeline.** `POST /api/resumes/generate` already accepts and persists any `templateId` the
+   caller is allowed to select — including a `CUSTOM_UPLOAD` one — because
+   `TemplateService.resolveForGeneration` was never built to check `source` (discovered while
+   inspecting resume-service before writing any code, per this feature's own inspection
+   requirement). The only real gap was document-service's render endpoint
+   (`POST /api/documents/resume-versions/{id}/render`), which unconditionally resolved
+   `templateId` through `ResumeTemplate.fromId` — the *built-in* enum — and would reject any
+   custom id. `DocumentRenderService.renderPdf` now checks whether `templateId` names a
+   `CustomTemplateAsset` the caller owns first, and if so delegates to
+   `CustomTemplateAssetService.generate` (the same method the standalone Templates-page flow
+   already calls) instead of the built-in Thymeleaf/PDF path. Every caller of that render
+   endpoint — `ProcessingPage`'s eventual PDF fetch, `ResultPage`/`AllResultPage`'s "Download"
+   button, Resume-only *and* Generate All — reaches this dispatch automatically, unchanged,
+   because they already only deal in `resumeVersionId`/`templateId` and never assumed a
+   built-in template. `Application`/`applicationId` tracking needed no changes at all: a
+   custom-templated resume is still generated, attached and assessed through the exact same
+   calls as a built-in one; only the later, on-demand render step differs.
+
+## Problem
+
+Three gaps, found by inspecting the existing implementation before writing anything (per this
+feature's own "Important implementation rule"):
+
+1. Custom-template upload validated and accepted only `.docx` (`CustomTemplateAssetService
+   .validateUpload`, hard-checking the filename extension and the DOCX/ZIP `"PK"` signature) —
+   the task requires PDF too, and a PDF is structurally nothing like a DOCX (no OOXML
+   paragraphs/runs to walk; text position is fixed, not reflowable), so it cannot reuse
+   `DocxStructureAnalyzer`/`DocxMailMerge` as-is.
+2. `TemplatePage.tsx` — the template-selection step of the actual `/generate` wizard every
+   generation flows through — still showed "Upload your own template… not built yet 🔒 Coming
+   Soon", a leftover from ADR-016's original Phase 1 scoping that was never updated when
+   custom-upload was later built as a *separate*, standalone feature (its own "Templates" page,
+   reachable only by picking an *already-generated* resume and mail-merging it there, entirely
+   outside the wizard, Application tracking, ATS/JD-fit and the dashboard). A user following
+   the wizard has never been able to reach their own uploaded template at all.
+3. A PDF's fixed layout means inserted content can overflow a placeholder's space in a way DOCX
+   (which reflows) structurally cannot — the task requires detecting this and either condensing
+   or failing cleanly, never silently overlapping/clipping text.
+
+## Options
+
+For PDF analysis/merge: (a) render the PDF to an image and composite text on top (loses
+selectable/searchable text, a real regression for an ATS-relevant document); (b) convert the
+PDF to DOCX first and reuse the DOCX pipeline unmodified (no reliable PDF→DOCX converter exists
+in this stack, and the conversion itself would be exactly the kind of "redesign the template"
+the task explicitly forbids); (c) parse and rewrite the PDF's own content streams directly with
+PDFBox — locate each `{{token}}`'s exact glyph positions/font/size, redact that region, draw the
+resolved value in the same font at the same origin, leaving every other byte of the page
+(images, lines, logos, other text) untouched.
+
+For wizard integration: (a) build a new, wizard-specific "custom template" step distinct from
+`TemplatePage.tsx`; (b) extend `TemplatePage.tsx`'s existing template grid (which already calls
+`listTemplates`, and `TemplateService.list` already mixes in the caller's own `CUSTOM_UPLOAD`
+rows) to show custom templates as selectable cards too, and replace the dead "Coming Soon" stub
+with a working upload entry point reusing the existing `UploadTemplateWizard`.
+
+## Selected Option
+
+(c) for PDF; (b) for wizard integration.
+
+## Reason
+
+PDFBox (already a transitive dependency via `openhtmltopdf-pdfbox`, now declared directly)
+supports exactly this: `PDFTextStripper` reports each string's `TextPosition`s (page, x/y
+baseline, width, the actual live `PDFont` and size), and `PDPageContentStream` in append mode
+can draw new content into an already-loaded page without touching anything else on it. This is
+the PDF-native equivalent of what `DocxMailMerge` already does for DOCX — replace only the
+placeholder, reusing its own exact formatting, leave everything else byte-for-byte alone —
+rather than a different, weaker strategy. Redetection happens fresh against the live document
+being merged (mirroring `DocxMailMerge`'s own re-walk of the freshly-loaded package) rather than
+reusing coordinates captured at upload time, so the merge is never working from stale geometry.
+If zero placeholders are found at upload, the file is rejected immediately (`FILE_REJECTED`,
+same as a corrupt DOCX) — never silently accepted as a template nothing can actually fill in.
+
+For wizard integration, Option (b) is the smaller change by a wide margin and fixes the actual
+defect (the wizard's own stub lying about what the backend can do) rather than adding a second,
+parallel way to reach the same capability. It also means Generate All gets custom-template
+support for free: `ProcessingPage.runAll` already just passes whatever `templateId`
+`TemplatePage` selected through to `generateResume`, identically for built-in and custom.
+
+Content fit: rather than adding a second AI call purely to shorten text for layout reasons
+(new cross-service coupling document-service has never had, for a narrow purpose), condensation
+is deterministic — proportional truncation of the specific overflowing field's already-grounded
+text, never inventing anything, exactly what "may condense/rephrase... must never add fabricated
+information" permits without requiring it to come from a fresh model call. If a field still
+doesn't fit after that, generation fails with `TEMPLATE_CONTENT_OVERFLOW` and the real reason
+(which field, by how much) — no `RenderedDocument` is ever persisted for a layout that didn't
+fit, matching every other failure in this codebase's rendering path (nothing partial is ever
+saved).
+
+## Impact
+
+- **document-service**: new `pdf` package (`PdfStructureAnalyzer`, `PdfPlaceholderLocator`
+  shared by analysis and merge, `PdfMailMerge`); `CustomTemplateAssetService` dispatches to the
+  DOCX or PDF analyzer/merge by the asset's stored `format`; `CustomTemplateAsset` gains
+  `format` (`DOCX`/`PDF`); `TemplateStructure`/`DetectedField` gain nullable PDF-specific fields
+  (page count/dimensions in points, per-field page/bounding box/font size/color) alongside the
+  existing DOCX-specific ones (twips), following the same "one shape, format-specific fields
+  null when not applicable" convention `Template` already uses — no second structure model.
+  `DocumentRenderService.renderPdf` gains the custom-template dispatch described above, and a
+  new minimal `TemplateServiceClient` Feign call (`GET /api/resumes/templates/{id}`) to fetch
+  the caller's saved field mapping when the main render endpoint — which, unlike the dedicated
+  `/custom-templates/{id}/generate` endpoint, never received a mapping in its request body —
+  needs one. New `ErrorCode.TEMPLATE_CONTENT_OVERFLOW` (422).
+- **resume-service**: `CustomTemplateAssetDto`/`Template.forCustomUpload` pass through the
+  asset's real `format` for `supportedFormats` instead of the previous hardcoded `List.of
+  ("DOCX")`. No change to `TemplateService`/`TemplateController`'s selection/ownership logic —
+  it already worked for any source.
+  `.docx"` extension/signature gate moved from a single hard check to a format dispatch that
+  also accepts `.pdf"` + the `%PDF-` signature; both still rejected the same way (`FILE_REJECTED`)
+  for anything else.
+- **frontend**: `TemplatePage.tsx` shows the caller's own custom templates (already returned by
+  `listTemplates`) as selectable cards, plus a working "Upload a template" entry point (the
+  existing `UploadTemplateWizard`, now accepting `.pdf` too); `StructureSummary.tsx` renders the
+  PDF-shaped facts (page count/size, no twips) when given a PDF template. The standalone
+  Templates page and its "Use this template" modal are unchanged — they remain a valid way to
+  re-run a template against a resume generated earlier, alongside the new wizard path.
+- Built-in templates, existing DOCX custom templates, Resume-only, Cover-Letter-only,
+  Email-only and Generate All are all unchanged: `DocumentRenderService`'s dispatch only takes
+  the custom-template branch when the id actually resolves to a `CustomTemplateAsset` the
+  caller owns; every other `templateId` falls through to the exact `ResumeTemplate.fromId` path
+  that already existed.

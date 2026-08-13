@@ -3,7 +3,9 @@ package ai.careerforge.document.api;
 import ai.careerforge.common.security.CallerId;
 import ai.careerforge.document.api.dto.DocumentRequests.RenderRequest;
 import ai.careerforge.document.api.dto.DocumentResponses.RenderedDocumentResponse;
+import ai.careerforge.document.domain.DocumentFormat;
 import ai.careerforge.document.domain.RenderedDocument;
+import ai.careerforge.document.render.TemplatePreviewResult;
 import ai.careerforge.document.service.DocumentRenderService;
 import org.springframework.http.ContentDisposition;
 import org.springframework.http.HttpHeaders;
@@ -64,13 +66,32 @@ public class DocumentController {
         RenderedDocument document = renderService.requireOwnedDocument(userId, id);
         byte[] bytes = renderService.downloadBytes(document);
         HttpHeaders headers = new HttpHeaders();
-        boolean isDocx = document.format() == ai.careerforge.document.domain.DocumentFormat.DOCX;
+        boolean isDocx = document.format() == DocumentFormat.DOCX;
         headers.setContentType(isDocx
                 ? MediaType.parseMediaType("application/vnd.openxmlformats-officedocument.wordprocessingml.document")
                 : MediaType.APPLICATION_PDF);
         headers.setContentDisposition(
                 ContentDisposition.attachment().filename(isDocx ? "resume.docx" : "resume.pdf").build());
         return ResponseEntity.ok().headers(headers).body(bytes);
+    }
+
+    /**
+     * The Templates page's real preview (redesign brief &sect;2/14): renders {@code templateId}
+     * — built-in or one of the caller's own custom uploads — against fixed sample data, through
+     * the exact same renderer/mail-merge real generation uses (see {@code DocumentRenderService
+     * #renderPreview}). Inline (not an attachment) so the frontend can embed the bytes directly
+     * (pdf.js for a PDF result, docx-preview for a DOCX one) rather than downloading a file.
+     */
+    @GetMapping("/templates/{templateId}/preview")
+    public ResponseEntity<byte[]> preview(@CallerId String userId, @PathVariable String templateId) {
+        TemplatePreviewResult preview = renderService.renderPreview(userId, templateId);
+        HttpHeaders headers = new HttpHeaders();
+        boolean isDocx = preview.format() == DocumentFormat.DOCX;
+        headers.setContentType(isDocx
+                ? MediaType.parseMediaType("application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+                : MediaType.APPLICATION_PDF);
+        headers.setContentDisposition(ContentDisposition.inline().build());
+        return ResponseEntity.ok().headers(headers).body(preview.bytes());
     }
 
     private static RenderedDocumentResponse toResponse(RenderedDocument document) {

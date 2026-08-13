@@ -46,9 +46,9 @@ class TemplateControllerTest {
         Template classic = new Template("classic", "Classic", "A classic layout.", "classic",
                 TemplateType.RESUME, "1", TemplateStatus.ACTIVE, TemplateSource.BUILT_IN, null,
                 List.of("PDF", "DOCX"), true);
-        when(templateService.list(TemplateType.RESUME)).thenReturn(List.of(classic));
+        when(templateService.list(eq("user-1"), eq(TemplateType.RESUME))).thenReturn(List.of(classic));
 
-        mockMvc.perform(get("/api/resumes/templates").param("type", "RESUME"))
+        mockMvc.perform(get("/api/resumes/templates").param("type", "RESUME").header("X-User-Id", "user-1"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$", hasSize(1)))
                 .andExpect(jsonPath("$[0].templateId").value("classic"))

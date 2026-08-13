@@ -11,10 +11,15 @@ export type TemplateDocumentType = 'RESUME' | 'COVER_LETTER' | 'EMAIL';
 export type TemplateStatus = 'ACTIVE' | 'DISABLED';
 export type TemplateSource = 'BUILT_IN' | 'CUSTOM_UPLOAD' | 'ONLINE';
 
-/** Real structural facts document-service's analyzer read straight off the uploaded .docx —
- *  see DocxStructureAnalyzer. Twips are DOCX's native unit (1440 = 1 inch). `null` only for
- *  built-in templates, which have no uploaded file to analyze. */
+/** Real structural facts document-service's analyzer read straight off the uploaded file — see
+ *  DocxStructureAnalyzer (DOCX) / PdfStructureAnalyzer (PDF). `sourceType` discriminates which
+ *  field group is populated: a DOCX row fills the twips/column/paragraph fields (twips are
+ *  DOCX's native unit, 1440 = 1 inch) and leaves the PDF-only ones null; a PDF row fills
+ *  `pageCount`/`pageWidthPt`/`pageHeightPt` (PDF's native unit, points — 1/72 inch) and leaves
+ *  the DOCX-only ones null/zero — the two are never treated as equivalent (ADR-023). `null`
+ *  entirely only for built-in templates, which have no uploaded file to analyze. */
 export interface TemplateStructure {
+  sourceType: 'DOCX' | 'PDF';
   pageWidthTwips: number | null;
   pageHeightTwips: number | null;
   marginTopTwips: number | null;
@@ -22,21 +27,33 @@ export interface TemplateStructure {
   marginLeftTwips: number | null;
   marginRightTwips: number | null;
   columnCount: number;
+  paragraphCount: number;
+  tableCount: number;
+  hasHeader: boolean;
+  hasFooter: boolean;
+  pageCount: number | null;
+  pageWidthPt: number | null;
+  pageHeightPt: number | null;
   fontsUsed: string[];
   fontSizesPt: number[];
   colorsUsedHex: string[];
   alignmentsUsed: string[];
   headingsFound: string[];
-  paragraphCount: number;
-  tableCount: number;
-  hasHeader: boolean;
-  hasFooter: boolean;
 }
 
+/** The PDF-specific geometry fields are `null` for a placeholder detected in a DOCX. */
 export interface DetectedField {
   token: string;
   context: string;
   suggestedField: string | null;
+  pdfPage: number | null;
+  pdfX: number | null;
+  pdfY: number | null;
+  pdfWidth: number | null;
+  pdfHeight: number | null;
+  pdfFontSizePt: number | null;
+  pdfFontName: string | null;
+  pdfColorHex: string | null;
 }
 
 export interface Template {

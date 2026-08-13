@@ -1,5 +1,6 @@
 package ai.careerforge.resume.service;
 
+import ai.careerforge.common.error.ApiError;
 import ai.careerforge.common.error.ApiException;
 import ai.careerforge.common.error.ErrorCode;
 import ai.careerforge.resume.client.ClientDtos.CustomTemplateAssetDto;
@@ -104,7 +105,8 @@ public class TemplateService {
         Map<String, String> suggestedMapping = suggestMapping(asset.detectedFields());
 
         Template template = Template.forCustomUpload(
-                asset.id(), userId, name.trim(), type, asset.originalFilename(), structureMap, detectedFieldMaps, suggestedMapping);
+                asset.id(), userId, name.trim(), type, asset.originalFilename(), asset.format(),
+                structureMap, detectedFieldMaps, suggestedMapping);
         return templates.save(template);
     }
 
@@ -128,7 +130,7 @@ public class TemplateService {
 
         Template duplicated = Template.forCustomUpload(
                 copy.id(), userId, original.name() + " (copy)", original.type(), copy.originalFilename(),
-                toMap(copy.structure()), toDetectedFieldMaps(copy.detectedFields()), original.fieldMappings());
+                copy.format(), toMap(copy.structure()), toDetectedFieldMaps(copy.detectedFields()), original.fieldMappings());
         return templates.save(duplicated);
     }
 
@@ -196,13 +198,29 @@ public class TemplateService {
         try {
             return call.call();
         } catch (FeignException.BadRequest ex) {
-            // document-service's own validation (not a real .docx, too large, bad filename)
-            // rejected it — surface that as this request's own validation failure rather than
-            // a generic upstream error.
-            throw new ApiException(ErrorCode.FILE_REJECTED, "The uploaded file was rejected. Make sure it's a valid .docx file under 5 MB.");
+            // document-service's own validation (wrong/mismatched format, no placeholders in a
+            // PDF, too large, bad filename, ...) rejected it. document-service's ErrorCode
+            // messages are already written as "safe, client-facing wording" (see ErrorCode's own
+            // javadoc) — forwarding the real one gives a far more actionable reason ("No
+            // {{placeholder}} fields were found in this PDF's text", say) than a generic string
+            // ever could, and — critically — never hardcodes a single format the way the
+            // previous ".docx file" message did once PDF became a second accepted format
+            // (ADR-023). Falls back to a format-neutral generic message if the body can't be
+            // parsed for any reason, never to a wrong, misleading one.
+            throw new ApiException(ErrorCode.FILE_REJECTED, upstreamMessage(ex,
+                    "The uploaded file was rejected. Make sure it's a valid .docx or .pdf file under 5 MB."));
         } catch (FeignException ex) {
             log.warn("document-service call failed: {}", ex.getMessage());
             throw new ApiException(ErrorCode.UPSTREAM_UNAVAILABLE, safeMessage);
+        }
+    }
+
+    private String upstreamMessage(FeignException.BadRequest ex, String fallback) {
+        try {
+            ApiError body = objectMapper.readValue(ex.contentUTF8(), ApiError.class);
+            return (body.message() == null || body.message().isBlank()) ? fallback : body.message();
+        } catch (Exception parseFailure) {
+            return fallback;
         }
     }
 

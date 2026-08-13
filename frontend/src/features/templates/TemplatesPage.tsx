@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Link } from 'react-router-dom';
+import { useSearchParams } from 'react-router-dom';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { EmptyState } from '@/components/ui/EmptyState';
@@ -11,16 +11,16 @@ import { FilterChipGroup } from '@/features/dashboard/components/FilterChipGroup
 import { PageHeader } from '@/features/dashboard/components/PageHeader';
 import { SearchInput } from '@/features/dashboard/components/SearchInput';
 import { GridIcon, PlusCircleIcon } from '@/features/dashboard/icons';
-import { TemplatePreview } from '@/features/generate/components/TemplatePreview';
 import { listTemplates, type Template, type TemplateDocumentType } from '@/services/templateApi';
 import { CustomTemplateCard } from './components/CustomTemplateCard';
 import { EditMappingModal } from './components/EditMappingModal';
 import { GenerateFromCustomTemplateModal } from './components/GenerateFromCustomTemplateModal';
-import { StructureSummary } from './components/StructureSummary';
+import { TemplateCard } from './components/TemplateCard';
+import { TemplatePreviewModal } from './components/TemplatePreviewModal';
 import { UploadTemplateWizard } from './components/UploadTemplateWizard';
 
 type SourceTab = 'BUILT_IN' | 'CUSTOM';
-type SortBy = 'newest' | 'name' | 'type';
+type SortBy = 'newest' | 'oldest' | 'name-asc' | 'name-desc';
 
 const CATEGORIES: { id: TemplateDocumentType; label: string; generationType: string }[] = [
   { id: 'RESUME', label: 'Resume', generationType: 'RESUME_ONLY' },
@@ -30,52 +30,54 @@ const CATEGORIES: { id: TemplateDocumentType; label: string; generationType: str
 
 const SORT_OPTIONS: { id: SortBy; label: string }[] = [
   { id: 'newest', label: 'Newest' },
-  { id: 'name', label: 'Name' },
-  { id: 'type', label: 'Type' },
+  { id: 'oldest', label: 'Oldest' },
+  { id: 'name-asc', label: 'Name A–Z' },
+  { id: 'name-desc', label: 'Name Z–A' },
 ];
 
 function sortTemplates(items: Template[], sortBy: SortBy): Template[] {
   const copy = [...items];
-  if (sortBy === 'name') return copy.sort((a, b) => a.name.localeCompare(b.name));
-  if (sortBy === 'type') return copy.sort((a, b) => a.type.localeCompare(b.type));
-  return copy.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  if (sortBy === 'name-asc') return copy.sort((a, b) => a.name.localeCompare(b.name));
+  if (sortBy === 'name-desc') return copy.sort((a, b) => b.name.localeCompare(a.name));
+  copy.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  return sortBy === 'oldest' ? copy.reverse() : copy;
 }
 
-function BuiltInTemplateCard({ template, generationType, onPreview }: { template: Template; generationType: string; onPreview: () => void }) {
+/** Skeleton document cards (redesign spec &sect;21) — same card shape as the real thing, never
+ *  a blank grid while the catalogue itself is still loading. */
+function CardSkeletonGrid() {
   return (
-    <div className="flex flex-col gap-3 rounded-2xl border border-border-strong p-4">
-      <TemplatePreview previewKey={template.previewKey} />
-      <div>
-        <div className="flex items-center justify-between gap-2">
-          <h3 className="text-sm font-semibold text-ink">{template.name}</h3>
-          {template.atsSafe && (
-            <span className="shrink-0 rounded-full bg-mint/10 px-2 py-0.5 text-[11px] font-medium text-mint">ATS-safe</span>
-          )}
+    <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+      {Array.from({ length: 4 }).map((_, i) => (
+        <div key={i} className="animate-pulse overflow-hidden rounded-2xl border border-border-strong">
+          <div className="aspect-[8.5/11] w-full bg-surface-2" />
+          <div className="space-y-2 p-4">
+            <div className="h-3 w-2/3 rounded bg-surface-2" />
+            <div className="h-2 w-1/3 rounded bg-surface-2" />
+            <div className="mt-3 h-8 w-full rounded-full bg-surface-2" />
+          </div>
         </div>
-        <p className="mt-1 text-xs leading-relaxed text-ink-muted">{template.description}</p>
-        <div className="mt-3 flex gap-2">
-          <Button type="button" variant="secondary" className="!px-3 !py-2 !text-xs" onClick={onPreview}>
-            Preview
-          </Button>
-          <Link to={`/generate/job?type=${generationType}&templateId=${template.templateId}`} className="flex-1">
-            <Button variant="secondary" className="w-full !py-2 !text-xs">
-              Use this template
-            </Button>
-          </Link>
-        </div>
-      </div>
+      ))}
     </div>
   );
 }
 
 /**
- * The complete template library — built-in (resume-service's seeded catalogue) and, new in
- * this slice, a user's own uploaded custom templates, side by side. Both come back from the
- * same real `listTemplates` call (resume-service now scopes custom rows to the caller — see
- * TemplateService#list) and are split into the [Built-in Templates] / [My Templates] tabs
- * purely client-side by `source`.
+ * The complete template library — built-in (resume-service's seeded catalogue) and a user's own
+ * uploaded custom templates, side by side. Both come back from the same real `listTemplates`
+ * call (resume-service scopes custom rows to the caller). Every card's preview is the real,
+ * rendered document (see `DocumentPreview`) — the same `PdfRenderer`/mail-merge pipeline that
+ * renders the final generated document, fed fixed sample data instead of a real profile — never
+ * a CSS mockup, and never a filename standing in for a design (redesign brief &sect;1-2/25).
  */
 export function TemplatesPage() {
+  const [searchParams] = useSearchParams();
+  // Optional deep-link: a caller (e.g. a future "change template" action elsewhere) can open
+  // this page with a specific template highlighted — this page itself never sets its own
+  // persistent "current selection", since a template only really becomes "selected" once it's
+  // attached to an in-progress generation (see TemplatePage, the wizard's own picker step).
+  const highlightedTemplateId = searchParams.get('selected');
+
   const [category, setCategory] = useState<TemplateDocumentType>('RESUME');
   const [sourceTab, setSourceTab] = useState<SourceTab>('BUILT_IN');
   const [search, setSearch] = useState('');
@@ -104,6 +106,18 @@ export function TemplatesPage() {
   }, [bySource, search, sortBy]);
 
   const customCount = (templatesQuery.data ?? []).filter((t) => t.source === 'CUSTOM_UPLOAD').length;
+
+  const previewPrimaryAction = previewTemplate
+    ? previewTemplate.source === 'BUILT_IN'
+      ? { label: 'Use this template', href: `/generate/job?type=${activeCategory.generationType}&templateId=${previewTemplate.templateId}` }
+      : previewTemplate.type === 'RESUME'
+        ? { label: 'Use this template', onClick: () => setGenerateTemplate(previewTemplate) }
+        : {
+            label: 'Generation coming soon',
+            disabled: true,
+            disabledReason: 'Generation for cover letters and emails is coming soon.',
+          }
+    : undefined;
 
   return (
     <DashboardShell>
@@ -156,8 +170,8 @@ export function TemplatesPage() {
               </div>
             </div>
 
-            <div className="mt-5">
-              {templatesQuery.isLoading && <p className="text-sm text-ink-faint">Loading…</p>}
+            <div className="mt-6">
+              {templatesQuery.isLoading && <CardSkeletonGrid />}
               {templatesQuery.isError && <ErrorBanner error={templatesQuery.error} />}
 
               {templatesQuery.data && filtered.length === 0 && sourceTab === 'BUILT_IN' && (
@@ -171,14 +185,14 @@ export function TemplatesPage() {
               {templatesQuery.data && filtered.length === 0 && sourceTab === 'CUSTOM' && (
                 <EmptyState
                   icon={<GridIcon className="h-5 w-5" />}
-                  title={search ? 'No templates match your search.' : "You haven't uploaded a template yet."}
+                  title={search ? 'No templates match your search.' : 'No custom templates yet.'}
                   {...(search
                     ? {}
                     : {
-                        hint: 'Upload your own resume, cover letter or email design and CareerForge will fill it with your real content.',
+                        hint: 'Upload your own resume design and CareerForge AI will preserve its layout, filling in your real content.',
                         action: (
                           <Button className="!px-5 !py-2.5 !text-sm" onClick={() => setShowUploadWizard(true)}>
-                            Upload custom template
+                            Upload Template
                           </Button>
                         ),
                       })}
@@ -186,21 +200,24 @@ export function TemplatesPage() {
               )}
 
               {filtered.length > 0 && (
-                <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
                   {filtered.map((template) =>
                     template.source === 'BUILT_IN' ? (
-                      <BuiltInTemplateCard
+                      <TemplateCard
                         key={template.templateId}
                         template={template}
                         generationType={activeCategory.generationType}
+                        selected={template.templateId === highlightedTemplateId}
                         onPreview={() => setPreviewTemplate(template)}
                       />
                     ) : (
                       <CustomTemplateCard
                         key={template.templateId}
                         template={template}
+                        selected={template.templateId === highlightedTemplateId}
                         onUse={template.type === 'RESUME' ? () => setGenerateTemplate(template) : null}
                         onEditMapping={() => setEditMappingTemplate(template)}
+                        onPreview={() => setPreviewTemplate(template)}
                       />
                     ),
                   )}
@@ -210,10 +227,7 @@ export function TemplatesPage() {
           </Card>
 
           {showUploadWizard && (
-            <UploadTemplateWizard
-              defaultType={category}
-              onClose={() => setShowUploadWizard(false)}
-            />
+            <UploadTemplateWizard defaultType={category} onClose={() => setShowUploadWizard(false)} />
           )}
           {editMappingTemplate && (
             <EditMappingModal template={editMappingTemplate} onClose={() => setEditMappingTemplate(null)} />
@@ -222,35 +236,14 @@ export function TemplatesPage() {
             <GenerateFromCustomTemplateModal template={generateTemplate} onClose={() => setGenerateTemplate(null)} />
           )}
           {previewTemplate && (
-            <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-              <div className="absolute inset-0 bg-void/70 backdrop-blur-sm animate-toast-in" onClick={() => setPreviewTemplate(null)} />
-              <div className="animate-card-in relative w-full max-w-md overflow-hidden rounded-2xl border border-border bg-surface p-6 shadow-2xl">
-                <div className="flex items-center justify-between">
-                  <h2 className="text-base font-semibold text-ink">{previewTemplate.name}</h2>
-                  <button
-                    type="button"
-                    onClick={() => setPreviewTemplate(null)}
-                    aria-label="Close"
-                    className="flex h-8 w-8 items-center justify-center rounded-lg text-ink-muted hover:text-ink"
-                  >
-                    ✕
-                  </button>
-                </div>
-                <div className="mt-4">
-                  <TemplatePreview previewKey={previewTemplate.previewKey} />
-                </div>
-                <p className="mt-4 text-sm text-ink-muted">{previewTemplate.description}</p>
-                {previewTemplate.structure && (
-                  <div className="mt-4">
-                    <StructureSummary structure={previewTemplate.structure} />
-                  </div>
-                )}
-              </div>
-            </div>
+            <TemplatePreviewModal
+              template={previewTemplate}
+              onClose={() => setPreviewTemplate(null)}
+              primaryAction={previewPrimaryAction}
+            />
           )}
         </>
       )}
     </DashboardShell>
   );
 }
-

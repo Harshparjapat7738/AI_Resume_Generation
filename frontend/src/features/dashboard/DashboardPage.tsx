@@ -137,7 +137,7 @@ export function DashboardPage() {
             {/* Main grid: recent activity beside profile/quick actions */}
             <div className="mt-6 grid gap-6 lg:grid-cols-[1fr_320px]">
               <div className="min-w-0 space-y-6">
-                <RecentSection id="applications" title="Recent applications" viewAllHref="/applications">
+                <RecentSection id="applications" title="Recent Applications" viewAllHref="/applications">
                   {summaryQuery.isLoading && <p className="text-sm text-ink-faint">Loading…</p>}
                   {summaryQuery.isError && <ErrorBanner error={summaryQuery.error} />}
                   {summaryQuery.data && recentApplications.length === 0 && (
@@ -161,7 +161,7 @@ export function DashboardPage() {
                   )}
                 </RecentSection>
 
-                <RecentSection title="Recent resumes" viewAllHref="/resumes">
+                <RecentSection title="Recent Resumes" viewAllHref="/resumes">
                   {(summaryQuery.isLoading || legacyResumesQuery.isLoading) && (
                     <p className="text-sm text-ink-faint">Loading…</p>
                   )}
@@ -193,7 +193,7 @@ export function DashboardPage() {
                   )}
                 </RecentSection>
 
-                <RecentSection title="Recent cover letters" viewAllHref="/cover-letters">
+                <RecentSection title="Recent Cover Letters" viewAllHref="/cover-letters">
                   {summaryQuery.isLoading && <p className="text-sm text-ink-faint">Loading…</p>}
                   {!summaryQuery.isLoading && coverLetterApplications.length === 0 && (
                     <EmptyState title="No cover letters yet." hint="Generated cover letters will appear here." />
@@ -207,7 +207,7 @@ export function DashboardPage() {
                   )}
                 </RecentSection>
 
-                <RecentSection title="Recent emails" viewAllHref="/emails">
+                <RecentSection title="Recent Emails" viewAllHref="/emails">
                   {summaryQuery.isLoading && <p className="text-sm text-ink-faint">Loading…</p>}
                   {!summaryQuery.isLoading && emailApplications.length === 0 && (
                     <EmptyState title="No emails yet." hint="Generated emails will appear here." />

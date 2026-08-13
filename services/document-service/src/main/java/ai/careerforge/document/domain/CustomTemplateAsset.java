@@ -30,6 +30,12 @@ public class CustomTemplateAsset {
     @Field("originalFilename")
     private String originalFilename;
 
+    /** DOCX or PDF (ADR-023) — decides which analyzer/merge engine every subsequent operation
+     *  on this asset dispatches to. Defaults to {@code DOCX} via {@link #format()} for rows
+     *  persisted before this field existed (Spring Data leaves an absent field {@code null}). */
+    @Field("format")
+    private TemplateFormat format;
+
     @Field("objectKey")
     private String objectKey;
 
@@ -53,10 +59,12 @@ public class CustomTemplateAsset {
         // Spring Data
     }
 
-    public CustomTemplateAsset(String userId, String originalFilename, String objectKey, long byteSize,
-                                String sha256, TemplateStructure structure, List<DetectedField> detectedFields) {
+    public CustomTemplateAsset(String userId, String originalFilename, TemplateFormat format, String objectKey,
+                                long byteSize, String sha256, TemplateStructure structure,
+                                List<DetectedField> detectedFields) {
         this.userId = userId;
         this.originalFilename = originalFilename;
+        this.format = format;
         this.objectKey = objectKey;
         this.byteSize = byteSize;
         this.sha256 = sha256;
@@ -74,6 +82,13 @@ public class CustomTemplateAsset {
 
     public String originalFilename() {
         return originalFilename;
+    }
+
+    /** {@code DOCX} for any row persisted before this field existed (ADR-023) — every asset
+     *  created before this feature really was a DOCX, since that was the only format ever
+     *  accepted. */
+    public TemplateFormat format() {
+        return format == null ? TemplateFormat.DOCX : format;
     }
 
     public String objectKey() {

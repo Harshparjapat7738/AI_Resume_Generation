@@ -249,6 +249,15 @@ export function ArrowUpDownIcon({ className }: IconProps) {
   );
 }
 
+export function RefreshIcon({ className }: IconProps) {
+  return (
+    <svg {...base} className={className}>
+      <path d="M4.5 12a7.5 7.5 0 0 1 12.9-5.25M19.5 12a7.5 7.5 0 0 1-12.9 5.25" />
+      <path d="M17.5 3.5v3.5H14M6.5 20.5V17H10" />
+    </svg>
+  );
+}
+
 export function AlertTriangleIcon({ className }: IconProps) {
   return (
     <svg {...base} className={className}>

@@ -53,3 +53,15 @@ export function generateFromCustomTemplate(
     body: JSON.stringify({ resumeVersionId, fieldMappings }),
   });
 }
+
+/**
+ * The Templates page's real preview — renders `templateId` (built-in or one of the caller's
+ * own custom uploads) against fixed sample data through the exact same renderer/mail-merge a
+ * real generation uses (see document-service's `DocumentRenderService#renderPreview`). The
+ * returned blob's `type` tells the caller which viewer to use: `application/pdf` (built-in
+ * templates and PDF-sourced custom uploads) or the DOCX mime type (DOCX-sourced custom
+ * uploads) — never guessed client-side.
+ */
+export function getTemplatePreview(templateId: string): Promise<Blob> {
+  return apiFetchBlob(`/api/documents/templates/${templateId}/preview`);
+}

@@ -44,6 +44,10 @@
         <testcontainers.version>1.20.6</testcontainers.version>
         <jjwt.version>0.12.6</jjwt.version>
         <openhtmltopdf.version>1.1.22</openhtmltopdf.version>
+        <!-- Already pulled in transitively by openhtmltopdf-pdfbox; declared directly (ADR-023)
+             now that document-service reads/writes PDF content streams itself for custom PDF
+             templates, not only through openhtmltopdf's own renderer. -->
+        <pdfbox.version>3.0.3</pdfbox.version>
         <docx4j.version>11.5.3</docx4j.version>
         <tika.version>3.1.0</tika.version>
         <jsoup.version>1.19.1</jsoup.version>
@@ -99,6 +103,11 @@
                 <groupId>io.github.openhtmltopdf</groupId>
                 <artifactId>openhtmltopdf-pdfbox</artifactId>
                 <version>${openhtmltopdf.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.apache.pdfbox</groupId>
+                <artifactId>pdfbox</artifactId>
+                <version>${pdfbox.version}</version>
             </dependency>
             <dependency>
                 <groupId>org.docx4j</groupId>

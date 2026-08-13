@@ -51,19 +51,28 @@ public final class ClientDtos {
     }
 
     // ---- document-service (custom templates) -------------------------------
+    // Mirrors document-service's CustomTemplateAssetResponses exactly, field for field (ADR-023
+    // added the PDF-only ones below) — Jackson's default FAIL_ON_UNKNOWN_PROPERTIES means any
+    // field present in that response but missing here would break every custom-template upload,
+    // not just PDF ones, so this must stay in lockstep with the real response shape.
 
     public record TemplateStructureDto(
+            String sourceType,
             Integer pageWidthTwips, Integer pageHeightTwips, Integer marginTopTwips, Integer marginBottomTwips,
-            Integer marginLeftTwips, Integer marginRightTwips, int columnCount, List<String> fontsUsed,
-            List<Double> fontSizesPt, List<String> colorsUsedHex, List<String> alignmentsUsed,
-            List<String> headingsFound, int paragraphCount, int tableCount, boolean hasHeader, boolean hasFooter) {
+            Integer marginLeftTwips, Integer marginRightTwips, int columnCount, int paragraphCount, int tableCount,
+            boolean hasHeader, boolean hasFooter, Integer pageCount, Float pageWidthPt, Float pageHeightPt,
+            List<String> fontsUsed, List<Double> fontSizesPt, List<String> colorsUsedHex,
+            List<String> alignmentsUsed, List<String> headingsFound) {
     }
 
-    public record DetectedFieldDto(String token, String context, String suggestedField) {
+    public record DetectedFieldDto(
+            String token, String context, String suggestedField,
+            Integer pdfPage, Float pdfX, Float pdfY, Float pdfWidth, Float pdfHeight,
+            Float pdfFontSizePt, String pdfFontName, String pdfColorHex) {
     }
 
     public record CustomTemplateAssetDto(
-            String id, String originalFilename, long byteSize, String sha256,
+            String id, String originalFilename, String format, long byteSize, String sha256,
             TemplateStructureDto structure, List<DetectedFieldDto> detectedFields, String createdAt) {
     }
 }

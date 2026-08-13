@@ -1,22 +1,21 @@
 import type { ReactNode } from 'react';
 import { AppHeader } from '@/components/layout/AppHeader';
+import { GENERATION_STEPS } from './components/GenerationProgress';
 
-const DEFAULT_STEPS = ['Output', 'Job description', 'Review', 'Template', 'Generate'] as const;
-
-/** No template step — email generation has nothing to select a template for. */
-export const EMAIL_STEPS = ['Output', 'Job description', 'Review', 'Generate'] as const;
-
-/** No template step — cover-letter generation has nothing to select a template for either
- *  (docs/DATABASE.md's `templates.type` reserves `COVER_LETTER` for later; no rows exist
- *  yet, see ARCHITECTURE_DECISIONS.md ADR-020). */
-export const COVER_LETTER_STEPS = ['Output', 'Job description', 'Review', 'Generate'] as const;
-
+/**
+ * Shell for every generation step except Review — Review (all four generation types) has its
+ * own full-width dashboard shell instead (`GenerationReviewPage`), matching the redesign brief.
+ * `GENERATION_STEPS` is the same four-step list (Output / Job description / Review / Generate)
+ * that page's own progress bar renders, so every step of the wizard — including the template
+ * picker, which is still its own page (`TemplatePage`) for RESUME_ONLY/ALL — shows one
+ * consistent progress indicator rather than a second design.
+ */
 export function GenerateLayout({
   activeStep,
   title,
   subtitle,
   children,
-  steps = DEFAULT_STEPS,
+  steps = GENERATION_STEPS,
 }: {
   activeStep: number;
   title: string;

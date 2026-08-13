@@ -142,7 +142,7 @@ public class DocxStructureAnalyzer {
         boolean hasHeader = hasRelationshipType(pkg, HEADER_RELATIONSHIP_TYPES);
         boolean hasFooter = hasRelationshipType(pkg, FOOTER_RELATIONSHIP_TYPES);
 
-        return new TemplateStructure(
+        return TemplateStructure.forDocx(
                 pageWidth, pageHeight, marginTop, marginBottom, marginLeft, marginRight, columnCount,
                 List.copyOf(fonts), List.copyOf(sizes), List.copyOf(colors), List.copyOf(alignments),
                 List.copyOf(headings), paragraphCount, tableCount, hasHeader, hasFooter);

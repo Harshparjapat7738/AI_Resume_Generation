@@ -11,7 +11,7 @@ import {
 } from '@/services/applicationApi';
 import { assessResume } from '@/services/assessmentApi';
 import { generateResume } from '@/services/resumeApi';
-import { COVER_LETTER_STEPS, EMAIL_STEPS, GenerateLayout } from './GenerateLayout';
+import { GenerateLayout } from './GenerateLayout';
 
 /**
  * generateResume + assessResume are two synchronous backend calls (three Groq requests
@@ -141,8 +141,7 @@ export function ProcessingPage() {
 
   return (
     <GenerateLayout
-      activeStep={skipsTemplate ? 3 : 4}
-      steps={isEmailOnly ? EMAIL_STEPS : isCoverLetterOnly ? COVER_LETTER_STEPS : undefined}
+      activeStep={3}
       title={
         isEmailOnly
           ? 'Generating your email'

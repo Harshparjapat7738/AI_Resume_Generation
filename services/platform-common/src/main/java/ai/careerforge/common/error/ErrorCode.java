@@ -30,7 +30,9 @@ public enum ErrorCode {
     AI_GENERATION_FAILED(HttpStatus.BAD_GATEWAY, "Generation could not be completed. Please retry."),
     AI_GROUNDING_FAILED(HttpStatus.UNPROCESSABLE_ENTITY,
             "Generated content could not be verified against your profile."),
-    DOCUMENT_RENDER_FAILED(HttpStatus.INTERNAL_SERVER_ERROR, "The document could not be rendered.");
+    DOCUMENT_RENDER_FAILED(HttpStatus.INTERNAL_SERVER_ERROR, "The document could not be rendered."),
+    TEMPLATE_CONTENT_OVERFLOW(HttpStatus.UNPROCESSABLE_ENTITY,
+            "The generated content does not fit this template, even after condensing it.");
 
     private final HttpStatus status;
     private final String defaultMessage;

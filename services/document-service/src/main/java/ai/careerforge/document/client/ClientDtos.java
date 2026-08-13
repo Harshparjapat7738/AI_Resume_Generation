@@ -34,6 +34,14 @@ public final class ClientDtos {
             Instant createdAt) {
     }
 
+    /** Only the one field {@code DocumentRenderService}'s custom-template render dispatch
+     *  actually needs from resume-service's {@code GET /api/resumes/templates/{id}} (ADR-023) —
+     *  {@code ignoreUnknown = true} lets every other field on that response (name, description,
+     *  structure, detectedFields, …) pass through unmirrored. */
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public record TemplateFieldMappingDto(String templateId, Map<String, String> fieldMappings) {
+    }
+
     // ---- profile-service --------------------------------------------------------
 
     @JsonIgnoreProperties(ignoreUnknown = true)

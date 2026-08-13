@@ -16,6 +16,7 @@ import ai.careerforge.document.client.ClientDtos.ProfileDto;
 import ai.careerforge.document.client.ClientDtos.ResumeVersionDto;
 import ai.careerforge.document.client.ProfileServiceClient;
 import ai.careerforge.document.client.ResumeServiceClient;
+import ai.careerforge.document.client.TemplateServiceClient;
 import ai.careerforge.document.domain.DocumentFormat;
 import ai.careerforge.document.domain.DocumentType;
 import ai.careerforge.document.domain.RenderedDocument;
@@ -42,9 +43,11 @@ class DocumentRenderServiceTest {
 
     @Mock private ResumeServiceClient resumeServiceClient;
     @Mock private ProfileServiceClient profileServiceClient;
+    @Mock private TemplateServiceClient templateServiceClient;
     @Mock private PdfRenderer pdfRenderer;
     @Mock private ObjectStorageService storage;
     @Mock private RenderedDocumentRepository documents;
+    @Mock private CustomTemplateAssetService customTemplateAssets;
 
     private DocumentRenderService service;
 
@@ -53,8 +56,13 @@ class DocumentRenderServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new DocumentRenderService(
-                resumeServiceClient, profileServiceClient, new ResumeRenderModelBuilder(), pdfRenderer, storage, documents);
+        // Every existing test here renders a built-in template; customTemplateAssets.findOwned
+        // is left unstubbed, which Mockito's default answer resolves to Optional.empty() for an
+        // Optional-returning method — i.e. "not a custom template", falling through to exactly
+        // the built-in path these tests already exercise. See CustomTemplateAssetServiceTest and
+        // DocumentRenderServiceCustomTemplateTest for the ADR-023 dispatch itself.
+        service = new DocumentRenderService(resumeServiceClient, profileServiceClient, templateServiceClient,
+                new ResumeRenderModelBuilder(), pdfRenderer, storage, documents, customTemplateAssets);
     }
 
     @Test
