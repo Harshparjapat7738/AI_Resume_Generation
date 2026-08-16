@@ -6,7 +6,6 @@ import ai.careerforge.application.api.dto.ApplicationRequests.RecordOutputFailur
 import ai.careerforge.application.api.dto.ApplicationRequests.UpdateStatusRequest;
 import ai.careerforge.application.api.dto.ApplicationResponses.ApplicationResponse;
 import ai.careerforge.application.api.dto.ApplicationResponses.ApplicationSummaryResponse;
-import ai.careerforge.application.api.dto.ApplicationResponses.CoverLetterVersionResponse;
 import ai.careerforge.application.api.dto.ApplicationResponses.EmailContentResponse;
 import ai.careerforge.application.api.dto.ApplicationResponses.HighlightResponse;
 import ai.careerforge.application.api.dto.ApplicationResponses.PageResponse;
@@ -14,10 +13,8 @@ import ai.careerforge.application.api.dto.ApplicationResponses.StatusHistoryResp
 import ai.careerforge.application.domain.Application;
 import ai.careerforge.application.domain.ApplicationStatus;
 import ai.careerforge.application.domain.ApplicationStatusHistory;
-import ai.careerforge.application.domain.CoverLetterVersion;
 import ai.careerforge.application.domain.EmailContent;
 import ai.careerforge.application.service.ApplicationService;
-import ai.careerforge.application.service.CoverLetterGenerationService;
 import ai.careerforge.application.service.EmailGenerationService;
 import ai.careerforge.common.security.CallerId;
 import jakarta.validation.Valid;
@@ -50,14 +47,11 @@ public class ApplicationController {
 
     private final ApplicationService applicationService;
     private final EmailGenerationService emailGenerationService;
-    private final CoverLetterGenerationService coverLetterGenerationService;
 
     public ApplicationController(ApplicationService applicationService,
-                                 EmailGenerationService emailGenerationService,
-                                 CoverLetterGenerationService coverLetterGenerationService) {
+                                 EmailGenerationService emailGenerationService) {
         this.applicationService = applicationService;
         this.emailGenerationService = emailGenerationService;
-        this.coverLetterGenerationService = coverLetterGenerationService;
     }
 
     @PostMapping
@@ -82,8 +76,7 @@ public class ApplicationController {
     }
 
     /**
-     * Records that one output of this application's generation failed — used by the
-     * {@code GenerationType.ALL} ("Generate All") flow, where resume/cover-letter/email are
+     * Records that one of an application's outputs failed to generate. Outputs are
      * each generated independently and a failure in one must not block, hide, or be confused
      * with the others. {@code output} is one of {@code resume}, {@code coverLetter}, {@code
      * email}. Persisting this (rather than only surfacing the failed call's own error to the
@@ -144,23 +137,6 @@ public class ApplicationController {
         return ResponseEntity.ok(toEmailResponse(emailGenerationService.requireLatest(userId, id)));
     }
 
-    /** Generates a grounded cover letter for a {@code COVER_LETTER_ONLY} application. Calling
-     *  this again regenerates: a new version is persisted and the application repoints at it,
-     *  the same pattern {@code POST .../email} and resume-service's generate both use. */
-    @PostMapping("/{id}/cover-letter")
-    public ResponseEntity<CoverLetterVersionResponse> generateCoverLetter(
-            @CallerId String userId, @PathVariable String id) {
-        return ResponseEntity.ok(toCoverLetterResponse(coverLetterGenerationService.generate(userId, id)));
-    }
-
-    /** Latest generated cover letter for this application. {@code 404} if none has been
-     *  generated yet. */
-    @GetMapping("/{id}/cover-letter")
-    public ResponseEntity<CoverLetterVersionResponse> getCoverLetter(
-            @CallerId String userId, @PathVariable String id) {
-        return ResponseEntity.ok(toCoverLetterResponse(coverLetterGenerationService.requireLatest(userId, id)));
-    }
-
     private static ApplicationSummaryResponse toSummary(Application application) {
         return new ApplicationSummaryResponse(
                 application.id(), application.jobDescriptionId(), application.jobTitle(), application.company(),
@@ -193,12 +169,5 @@ public class ApplicationController {
         return new EmailContentResponse(
                 email.id(), email.applicationId(), email.subject(), email.body(), highlights,
                 email.groundingReport(), email.removedParagraphs(), email.version(), email.createdAt());
-    }
-
-    private static CoverLetterVersionResponse toCoverLetterResponse(CoverLetterVersion version) {
-        return new CoverLetterVersionResponse(
-                version.id(), version.applicationId(), version.jobDescriptionId(), version.jobTitle(),
-                version.company(), version.version(), version.content(), version.groundingReport(),
-                version.removedParagraphs(), version.createdAt());
     }
 }

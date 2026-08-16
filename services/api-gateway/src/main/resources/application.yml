@@ -78,32 +78,10 @@ spring:
                 redis-rate-limiter.replenishRate: 5
                 redis-rate-limiter.burstCapacity: 10
 
-        - id: resume-service
-          uri: lb://resume-service
-          predicates:
-            - Path=/api/resumes/**
-          filters:
-            - name: RequestRateLimiter
-              args:
-                key-resolver: '#{@userKeyResolver}'
-                redis-rate-limiter.replenishRate: 3
-                redis-rate-limiter.burstCapacity: 6
-
         - id: assessment-service
           uri: lb://assessment-service
           predicates:
             - Path=/api/assessment/**
-          filters:
-            - name: RequestRateLimiter
-              args:
-                key-resolver: '#{@userKeyResolver}'
-                redis-rate-limiter.replenishRate: 10
-                redis-rate-limiter.burstCapacity: 20
-
-        - id: document-service
-          uri: lb://document-service
-          predicates:
-            - Path=/api/documents/**
           filters:
             - name: RequestRateLimiter
               args:
@@ -122,8 +100,7 @@ spring:
                 redis-rate-limiter.replenishRate: 20
                 redis-rate-limiter.burstCapacity: 40
 
-        # ai-service and notification-service are internal-only:
-        # they are deliberately NOT routed from the public gateway.
+        # ai-service is internal-only: deliberately NOT routed from the public gateway.
 
 eureka:
   client:

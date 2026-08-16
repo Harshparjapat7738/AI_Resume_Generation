@@ -5,10 +5,10 @@ import { GENERATION_STEPS } from './components/GenerationProgress';
 /**
  * Shell for every generation step except Review — Review (all four generation types) has its
  * own full-width dashboard shell instead (`GenerationReviewPage`), matching the redesign brief.
- * `GENERATION_STEPS` is the same four-step list (Output / Job description / Review / Generate)
- * that page's own progress bar renders, so every step of the wizard — including the template
- * picker, which is still its own page (`TemplatePage`) for RESUME_ONLY/ALL — shows one
- * consistent progress indicator rather than a second design.
+ * `steps` defaults to `GENERATION_STEPS` (the 5-step Resume/"Generate All" list, with its own
+ * step list); callers on the Email path — which skip
+ * template selection entirely — pass `stepsForGenerationType(type)` instead so the breadcrumb
+ * never shows a step that generation type doesn't have.
  */
 export function GenerateLayout({
   activeStep,

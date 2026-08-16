@@ -9,14 +9,13 @@ Updated whenever architecture or a major flow changes.
 education, experience, skills, projects, certifications, achievements — all six
 evidence-bearing sections, via an 8-step onboarding wizard and an always-editable
 `/profile` page), `jd-service` (text intake, SSRF-guarded URL intake — ADR-015 — confirm,
-analysis), `resume-service`
+analysis),
 (synchronous generation + history, plus the built-in template catalogue — ADR-013, ADR-016),
-`document-service` (real Resume PDF rendering against the selected template — ADR-018),
 `assessment-service` (ATS + JD-fit scoring, scoped to structured content — ADR-014) and
 `application-service` (the central `Application` aggregate — references only, generation
 lifecycle — ADR-017; email generation — ADR-019; cover-letter generation — ADR-020) are real.
-`notification-service` remains a wired-up skeleton: it builds,
-registers with Eureka, loads config and exposes health, but contains no domain logic yet.
+`notification-service` was removed (ADR-035) — it never grew past a wired-up skeleton (no
+domain logic was ever implemented), and nothing in the platform depended on it.
 Sections below marked *(skeleton — Mn)* describe the agreed design for a later milestone.
 
 ---
@@ -78,12 +77,10 @@ Routing table (`services/api-gateway/src/main/resources/application.yml`):
 | auth-service | `/api/auth/**` | auth-service | 20, 40 per user |
 | profile-service | `/api/profile/**` | profile-service | 20, 40 per user |
 | jd-service | `/api/jd/**` | jd-service | 5, 10 per user |
-| resume-service | `/api/resumes/**` | resume-service | 3, 6 per user |
 | assessment-service | `/api/assessment/**` | assessment-service | 10, 20 per user |
-| document-service | `/api/documents/**` | document-service | 10, 20 per user |
 | application-service | `/api/applications/**` | application-service | 20, 40 per user |
 
-`ai-service` and `notification-service` are deliberately absent — ADR-012.
+`ai-service` is deliberately absent — ADR-012.
 
 ---
 
@@ -155,20 +152,27 @@ The JWT signing secret lives here and in the gateway only (ADR-007). Token claim
 
 ```text
 profile-service
-├── Purpose        The candidate's verified professional data and the evidence inventory
+├── Purpose        The candidate's verified professional data, the evidence inventory, and
+│                  "My Templates" — the user's own saved Resume/Cover Letter files (ADR-034)
 ├── Port           8082
 ├── Responsibilities  personal information CRUD; six evidence-bearing sections (education,
 │                  experience, skills, projects, certifications, achievements), each with
 │                  create/update/delete and a stable evidenceId per item (EDU/EXP/SKILL/
 │                  PROJ/CERT/ACH); the combined ID-labelled evidence inventory that grounds
-│                  all generation
+│                  all generation. Separately (ADR-034): upload/list/rename/set-default/
+│                  delete/download a user's own template files — validated (extension +
+│                  magic-byte signature + size), stored, and returned byte-for-byte as
+│                  uploaded; no structural analysis, mail-merge or AI involvement of any kind
 ├── Not yet done   immutable profile versions; resume import (M3 remainder)
 ├── Database       careerforge_profile
-├── Collections    profiles   — profile_versions pending
-├── Dependencies   MongoDB Atlas
+├── Collections    profiles — profile_versions pending; templates (ADR-034, implemented)
+├── Dependencies   MongoDB Atlas; MinIO/S3 (ADR-034 — the same bucket the now-deleted
+│                  document-service used to own; this is its only remaining consumer)
 ├── External       none
 └── Note           This service is the sole authority on what is true about the candidate.
-                   If a fact is not here, no generated document may assert it.
+                   If a fact is not here, no generated document may assert it. Template files
+                   are a separate concern from evidence — a saved template is never itself
+                   evidence, and holds no AI-provider credential of any kind.
 ```
 
 **Backward compatibility.** Profiles created before a section existed simply have an empty
@@ -176,7 +180,7 @@ list for it — Spring Data leaves a missing document field at its Java default 
 erroring, so pre-existing profiles with only personal info and experience load unchanged.
 Verified directly against a real profile document written before this section existed.
 
-### jd-service **— core implemented**
+### jd-service **— core implemented; owns JD optimization (ADR-033)**
 
 ```text
 jd-service
@@ -199,55 +203,53 @@ jd-service
                    every fetched URL passes the SSRF guard first (ADR-015)
 ```
 
-### resume-service **— core implemented, synchronously (ADR-013)**
-
-```text
-resume-service
-├── Purpose        Orchestrate generation and own resume version history
-├── Port           8084
-├── Responsibilities  load confirmed JD analysis (jd-service) + evidence (profile-service);
-│                  drive the two-stage AI pipeline (ai-service); persist the result;
-│                  surface gaps (unmatched requirements) and removed (ungrounded) content
-├── Not yet done   async job queue + status polling, version history, template catalogue,
-│                  document rendering handoff (M5 remainder + M6)
-├── Database       careerforge_resume
-├── Collections    resume_generations · resume_versions   — templates pending
-├── Dependencies   profile-service, jd-service, ai-service (all reached directly via Eureka,
-│                  not through the gateway — caller identity is forwarded via X-User-Id,
-│                  see FeignHeaderForwardingConfig)
-└── Note           The only orchestrator. Nothing calls back into it except assessment reads.
-```
-
 ### ai-service **— implemented**
 
 ```text
 ai-service
-├── Purpose        The single boundary to Groq
+├── Purpose        The single boundary to Groq — the only process that holds GROQ_API_KEY.
+│                  Groq is the only AI provider; Gemini was removed entirely (ADR-033)
 ├── Port           8085 (internal only — ADR-012)
 ├── Responsibilities  versioned prompts; JD wrapped as untrusted data; JSON-schema-
-│                  constrained output; schema validation; grounding validation;
-│                  one retry then degrade; token/latency metrics
+│                  constrained output; schema validation; grounding validation (email);
+│                  hallucinated-id stripping (optimization); token/latency metrics
 ├── Database       none — Redis for idempotency keys and cached responses
 ├── APIs           GET  /internal/ai/status
 │                  POST /internal/ai/jd-analysis
 │                  POST /internal/ai/evidence-selection
-│                  POST /internal/ai/resume-content
-├── External       Groq API
+│                  POST /internal/ai/jd-optimization      (ADR-033 — the product's main output)
+│                  POST /internal/ai/email-content
+├── External       Groq API only
 └── Key classes    config/GroqProperties      env-bound; masks the key for diagnostics
                    config/GroqClientConfig    the one WebClient, key attached once
-                   client/GroqClient          JSON mode, backoff, metrics, no body logging
+                   client/AiChatClient        provider-agnostic contract (ADR-024) — system
+                                              prompt/user content in, JSON content/model/
+                                              token-count out
+                   client/GroqClient          the sole implementation; JSON mode, backoff,
+                                              metrics, no body logging. Distinguishes a 429
+                                              (quota) from a 5xx (outage) so a rate limit is
+                                              never reported as an outage
                    prompt/PromptRegistry      classpath prompts/<name>/v<N>.txt
                    prompt/UntrustedContent    sanitise + fence third-party text
                    schema/SchemaValidator     networknt, per-operation JSON Schema
-                   grounding/GroundingValidator   the anti-fabrication gate
+                   grounding/GroundingValidator   the anti-fabrication gate for email prose
                    service/JdAnalysisService, EvidenceSelectionService,
-                           ResumeContentService, AiGenerationSupport
+                           JdOptimizationService, EmailContentService, AiGenerationSupport
                    api/AiController
 ```
 
-**Security posture.** This is the only process that ever holds `GROQ_API_KEY`. It never
-returns HTML, a template, a command or PDF bytes. Request and response bodies are never
-logged — only model, latency, token counts and status.
+**JD optimization's grounding guarantee** differs from email's by necessity: it generates no
+prose, so there is no sentence to validate. Instead `JdOptimizationService.stripUnknownIds`
+removes every requirement or evidence id absent from the request, and downgrades a match left
+with no surviving evidence to `NONE`. Every candidate-facing value in a stored optimization is
+therefore an `evidenceId` that provably exists in the user's own profile.
+
+**Security posture.** This is the only process that ever holds `GROQ_API_KEY` — bound from
+an environment variable only (`GroqProperties`), never a literal in source, YAML or a Docker
+image, and exposed only in masked form (`maskedKey()`) for diagnostics. It never returns HTML, a template, a command
+or PDF bytes. Request and response bodies — including prompts and generated content — are
+never logged for either provider; metrics and logs carry only the operation tag, provider,
+retryable/success flag, model id, latency and token counts.
 
 **Three-layer injection defence**, none sufficient alone:
 
@@ -272,7 +274,7 @@ The class is deliberately biased towards rejection: a false positive costs one
 regeneration, a false negative puts an invented claim in a document a real person sends to
 an employer under their name.
 
-### assessment-service **— core implemented (ADR-014)**
+### assessment-service **— JD-fit only, keyed on the optimization (ADR-033)**
 
 ```text
 assessment-service
@@ -284,40 +286,18 @@ assessment-service
 │                  screening-readiness band (ADR-009); recommendations
 ├── Scope deviation   the blueprint's ten checks assume a rendered PDF/DOCX to inspect
 │                  (fonts, layout, header/footer) — this engine deliberately scores what's
-│                  measurable from JSON content instead (ADR-014); document-service now
+│                  measurable from the JD optimization instead (ADR-033); a rendered
 │                  renders a real PDF (ADR-018), but this scope was never solely "there's no
 │                  renderer yet" — revisiting it is unrelated follow-up work, not a gap here
 ├── Database       careerforge_assessment
 ├── Collections    ats_assessments · jd_fit_assessments (recommendations embedded — ADR-014)
-├── Dependencies   resume-service, jd-service, profile-service — all reached directly via
+├── Dependencies   jd-service, profile-service — all reached directly via
 │                  Eureka, not through the gateway, identity forwarded via X-User-Id
 └── Rule           No score is ever requested from the LLM. Every number is reproducible
                    from stored inputs and traceable to a requirement and an evidence ID.
 ```
 
-### document-service **— real Resume PDF rendering (ADR-018)**
-
-```text
-document-service
-├── Purpose        Deterministic rendering and private artifact custody
-├── Port           8087
-├── Responsibilities  render a resume version's structured content, merged with the
-│                  candidate's profile facts, through one of the three built-in templates
-│                  (Thymeleaf HTML/CSS → jsoup → openhtmltopdf-pdfbox → PDF); upload under a
-│                  random object key; stream authenticated downloads back through itself
-├── Runs synchronously in the request — no render-job queue yet (ADR-018, same deviation
-│                  pattern as resume generation, ADR-013)
-├── Not yet done   DOCX (docx4j dependency present, unused), cover-letter rendering
-├── Database       careerforge_document   (ADR-002)
-├── Collections    rendered_documents  (one row per resumeVersionId+format; ADR-018)
-├── Dependencies   resume-service, profile-service — reached directly via Eureka, not
-│                  through the gateway, identity forwarded via X-User-Id; MinIO (dev) / S3 (prod)
-├── APIs           /api/documents/**  (see docs/API_CATALOG.md)
-└── Security       private bucket, no static directory or presigned URL — every download is
-                   streamed through this service's own ownership-checked endpoint (ADR-018)
-```
-
-### application-service **— core implemented (ADR-017); email generation implemented (ADR-019); cover-letter generation implemented (ADR-020)**
+### application-service **— core implemented (ADR-017); email generation implemented (ADR-019)**
 
 ```text
 application-service
@@ -325,20 +305,20 @@ application-service
 │                  references to the resume, cover letter, email and both assessments
 ├── Port           8088
 ├── Responsibilities  verify + denormalise from jd-service on create; verify a supplied
-│                  resumeVersionId/templateId against resume-service; derive status per
+│                  derive status per
 │                  generationType (never accepted from the caller); enforce legal status
 │                  transitions; append-only status history; generate application-email
 │                  content (subject/greeting/closing/signature assembled deterministically
 │                  from already-verified data — job title/company, the candidate's real
 │                  name — ai-service supplies only the grounded highlight paragraph(s),
 │                  ADR-019); generate cover-letter content (evidence selection then grounded
-│                  content, mirroring resume-service's own two-Groq-call pipeline, ADR-020)
+│                  content (ADR-019)
 ├── Not yet done   Gmail drafts, combined (ALL) generation (GenerationType represents them;
 │                  nothing produces them yet — M8 remainder)
 ├── Database       careerforge_application
 ├── Collections    applications · application_status_history · emails · cover_letter_versions
 ├── APIs           /api/applications/**  (see docs/API_CATALOG.md)
-├── Dependencies   jd-service, resume-service, assessment-service, profile-service, ai-service
+├── Dependencies   jd-service, profile-service, ai-service
 │                  — all reached directly via Eureka, not through the gateway, identity
 │                  forwarded via X-User-Id
 ├── External       Gmail API (drafts scope only — not yet integrated)
@@ -349,16 +329,11 @@ application-service
                    candidate's real evidence for everything else.
 ```
 
-### notification-service *(skeleton — logic in M8)*
-
-```text
-notification-service
-├── Purpose        Transactional email
-├── Port           8089 (internal only — ADR-012)
-├── Database       none — consumes a Redis Stream
-├── External       SMTP provider
-└── Rule           Platform notifications only; never touches the user's job applications.
-```
+**`notification-service` was removed (ADR-035).** It never grew past a wired-up skeleton (no
+controller, no domain logic, no Redis Stream consumer was ever implemented) and had zero
+active callers anywhere in the platform. Transactional/system email is not currently
+implemented by anything; the candidate-facing application-email feature lives entirely in
+`application-service` and is unaffected.
 
 ---
 
@@ -414,32 +389,27 @@ JD analysis        title · company · seniority · keywords · requirements, ea
                    version thereafter.
 ```
 
-### Resume generation **— implemented, synchronously (ADR-013)**
+### JD optimization **— implemented (ADR-033), the product's primary flow**
 
 ```text
-Confirmed JD analysis (jd-service)  +  Evidence inventory (profile-service)
-                          ↓
-                     AI Service         evidence-selection: requirement → evidence IDs
-                          ↓
-                        Groq
-                          ↓
-                     AI Service         resume-content: write, then verify every statement
-                          ↓
-                  Structured JSON            ← JSON Schema validated
-                          ↓
-              Grounding validation           ← evidence IDs must resolve; no invented
-                          ↓                     metrics, employers, dates, URLs
-                    Resume Service            ← persists resume_versions, returns directly
-                          ↓
-                   Document Service            ← not yet implemented — no PDF/DOCX yet
+POST /api/jd/{id}/optimize            (gateway → jd-service)
+  ├── JdService.analyse                 confirmed JD + cached analysis (ownership enforced here)
+  ├── profile-service GET /api/profile/evidence     verified evidence inventory
+  ├── ai-service POST /internal/ai/jd-optimization  one Groq call
+  │     ├── JSON-Schema validation
+  │     └── stripUnknownIds — any requirement/evidence id not in the request is removed;
+  │         a match left with no evidence is downgraded to NONE
+  └── persist JdOptimization (jd_optimizations, one per jdVersionId)
+
+GET  /api/jd/{id}/optimization        the persisted result, no AI call
+POST /api/assessment/{jobDescriptionId}   deterministic JD-fit score over that optimization
 ```
 
-Failure path: schema or grounding failure triggers exactly one regeneration. If it fails
-again, the unsupported claim is removed (`removedSections`) and reported to the user —
-never silently kept. Requirements no evidence could support are reported as `gaps`, never
-fabricated to close the score.
+Re-reads an existing result for the same JD version rather than spending another AI request;
+`?refresh=true` recomputes, which is what a profile edit warrants. No document is produced at
+any point — the frontend exports JSON or a ready-to-paste external prompt.
 
-### ATS assessment **— implemented, scoped to content (ADR-014)**
+### JD-fit assessment **— implemented, scored from the optimization (ADR-033)**
 
 ```text
 Resume version  +  its JD analysis  +  caller's profile   (fetched via Eureka, not the gateway)
@@ -514,58 +484,6 @@ Wired into the frontend wizard: `OutputTypePage`'s "Email Content" card carries
 resume-only template step) → `ProcessingPage`, which creates the `Application` then calls
 this endpoint, landing on `/results/email/:applicationId` (`EmailResultPage`: copy subject,
 copy email, download as text, regenerate). The `RESUME_ONLY` path is unchanged throughout.
-
-### Cover-letter generation **— implemented (ADR-020)**
-
-```text
-POST /api/applications/{id}/cover-letter   (no body)
-              ↓
-      Cover Letter Generation Service
-              ↓
-   require generationType = COVER_LETTER_ONLY
-   fetch confirmed JD analysis        jd-service, GET /api/jd/{id}/analysis
-                                      — 409 JD_NOT_CONFIRMED if not confirmed yet
-   fetch evidence                     profile-service, GET /api/profile/evidence
-                                      — 400 VALIDATION_ERROR if empty, same guard resume uses
-              ↓
-   select evidence per requirement    ai-service, POST /internal/ai/evidence-selection
-                                      (same call resume-service makes — Stage 1)
-              ↓
-   generate grounded letter content   ai-service, POST /internal/ai/cover-letter (Stage 2:
-   citing the selected evidence       schema validate → grounding validate → regenerate once
-                                      → drop-and-report, mirroring ResumeContentService).
-                                      Job title/company are named without a citation
-                                      (GroundingValidator's 3-arg overload) — everything else
-                                      a paragraph states still needs one.
-              ↓
-   persist CoverLetterVersion         attach coverLetterVersionId to the Application,
-   (versioned)                        recompute status
-```
-
-Unlike email generation, this is a real two-stage pipeline — a letter needs to speak to the
-job's actual prioritised requirements, not just restate a title and company — so it runs
-resume-service's own pipeline shape (ADR-013), just orchestrated from application-service
-because that's where the public endpoint and the `Application` aggregate both live (ADR-017).
-
-Wired into the frontend wizard identically to email: `OutputTypePage`'s "Cover Letter" card
-carries `?type=COVER_LETTER_ONLY` through `JobDescriptionPage` → `ReviewPage` (skips the
-template step) → `ProcessingPage` (creates the `Application`, then calls this endpoint),
-landing on `/results/cover-letter/:applicationId` (`CoverLetterResultPage`: copy, download as
-text, regenerate). Both `RESUME_ONLY` and `EMAIL_ONLY` are unchanged.
-
-### Document download *(M6)*
-
-```text
-React → GET /api/documents/{id}/download
-Gateway  verifies JWT, sets X-User-Id
-Document Service
-  ├── load rendered_documents by id
-  ├── if document.userId != callerId → 404 (not 403: IDs must not be enumerable)
-  └── issue a 300-second presigned URL for a random object key in a private bucket
-React follows the URL directly to storage; bytes never transit the service.
-```
-
----
 
 ## 4. Cross-cutting conventions
 

@@ -1,3 +1,8 @@
+> **Superseded in part by ADR-033.** Milestones covering resume generation, document
+> rendering, the template system and Gemini describe removed functionality and are retained
+> only as history. The current product is JD optimization (jd-service + ai-service) plus
+> application-email generation; see `docs/CODEBASE.md` for the live architecture.
+
 # Implementation Plan
 
 **Source of truth:** `CareerForge_AI_Final_Developer_Blueprint_MongoDB_Atlas.md` (v3.0)
@@ -42,7 +47,7 @@ S3 (prod) for artifacts, Groq as the only LLM provider.
                           MongoDB Atlas cluster
                     (one logical database per service)
 
-  Application :8088 ──► Gmail API        Notification :8089 ──► SMTP
+  Application :8088 ──► Gmail API
   Redis :6379  — cache · rate limit · Redis Streams job queues
   Config Server :8888 · Eureka :8761 · Prometheus · Grafana · OTel Collector
 ```
@@ -77,7 +82,6 @@ assessment-service  ──► MongoDB(careerforge_assessment),
 document-service    ──► MongoDB(careerforge_document), MinIO/S3
 application-service ──► MongoDB(careerforge_application),
                         resume-service, document-service, ai-service, Gmail API
-notification-service──► Redis Streams, SMTP              (no database — ADR-002)
 ```
 
 There are **no cycles**. `resume-service` is the orchestrator; nothing calls back into it
@@ -113,8 +117,7 @@ careerforge-ai/
 │   ├── ai-service/          :8085
 │   ├── assessment-service/  :8086
 │   ├── document-service/    :8087
-│   ├── application-service/ :8088
-│   └── notification-service/:8089
+│   └── application-service/ :8088
 │
 ├── frontend/                        React 19 · TS · Vite · Tailwind 4 · GSAP
 ├── infrastructure/
@@ -152,7 +155,6 @@ ai/careerforge/<service>/
 | document-service | `careerforge_document` | `rendered_documents` *(ADR-002)* |
 | application-service | `careerforge_application` | `applications`, `application_status_history` |
 | ai-service | — | Redis only *(ADR-002)* |
-| notification-service | — | Redis Streams only *(ADR-002)* |
 
 Full document models, indexes and retention rules: `docs/DATABASE.md`.
 
@@ -186,7 +188,7 @@ and an `API_CATALOG.md` entry — in the same pull request.
 Internal-only (no gateway route, ADR-012) — the AI endpoints are **implemented**:
 `GET /internal/ai/status` ✅, `POST /internal/ai/jd-analysis` ✅,
 `POST /internal/ai/evidence-selection` ✅, `POST /internal/ai/resume-content` ✅,
-`POST /internal/ai/cover-letter` (M8), `POST /internal/notifications/send` (M8).
+`POST /internal/ai/cover-letter` (M8).
 
 ---
 

@@ -38,27 +38,17 @@ spring:
           predicates:
             - Path=/api/jd/**
 
-        - id: resume-service
-          uri: lb://resume-service
-          predicates:
-            - Path=/api/resumes/**
-
         - id: assessment-service
           uri: lb://assessment-service
           predicates:
             - Path=/api/assessment/**
-
-        - id: document-service
-          uri: lb://document-service
-          predicates:
-            - Path=/api/documents/**
 
         - id: application-service
           uri: lb://application-service
           predicates:
             - Path=/api/applications/**
 
-        # ai-service and notification-service remain unrouted (ADR-012).
+        # ai-service remains unrouted (ADR-012).
 
 management:
   health:

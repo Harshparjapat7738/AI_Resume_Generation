@@ -5,7 +5,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import java.util.List;
 
 /**
- * Local mirrors of the DTOs owned by jd-service, resume-service and assessment-service. Each
+ * Local mirrors of the DTOs owned by jd-service and assessment-service. Each
  * service defines its own client-side copy of the contracts it consumes — there is no shared
  * DTO module (ADR-006), only an agreed JSON shape.
  *
@@ -25,7 +25,7 @@ public final class ClientDtos {
     public record JobDescriptionDto(String id, String status, String title, String company) {
     }
 
-    /** Mirrors resume-service's own {@code Requirement}/{@code JdAnalysis} client DTOs —
+    /** Mirrors jd-service's own {@code Requirement}/{@code JdAnalysis} DTOs —
      *  used to drive cover-letter evidence selection the same way resume generation does. */
     @JsonIgnoreProperties(ignoreUnknown = true)
     public record RequirementDto(

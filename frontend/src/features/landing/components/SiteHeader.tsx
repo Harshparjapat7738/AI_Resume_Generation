@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
-import { GridIcon, UserIcon } from '@/components/layout/icons';
+import { GridIcon, UserIcon as AppUserIcon } from '@/components/layout/icons';
+import { ThemeToggle } from '@/components/layout/ThemeToggle';
 import { UserMenu } from '@/components/layout/UserMenu';
 import { logout as logoutRequest } from '@/services/authApi';
 import { useSession, useSessionActions } from '@/services/session';
@@ -9,8 +10,9 @@ import { SparkleIcon } from './icons';
 /** Anchors into the landing page's own sections — kept to real, existing content only. */
 const marketingLinks = [
   { href: '#top', label: 'Home' },
-  { href: '#benefits', label: 'Features' },
-  { href: '#workflow', label: 'How it works' },
+  { href: '#features', label: 'Features' },
+  { href: '#workflow', label: 'How It Works' },
+  { href: '#security', label: 'Security' },
   { href: '#faq', label: 'FAQ' },
 ];
 
@@ -18,7 +20,7 @@ const marketingLinks = [
  *  identical to AppHeader's nav so the chrome is the same navbar everywhere. */
 const appLinks = [
   { to: '/dashboard', label: 'Dashboard', icon: GridIcon },
-  { to: '/profile', label: 'Profile', icon: UserIcon },
+  { to: '/profile', label: 'Profile', icon: AppUserIcon },
 ];
 
 export function SiteHeader() {
@@ -58,15 +60,15 @@ export function SiteHeader() {
     >
       <div className="mx-auto flex h-16 max-w-6xl items-center justify-between px-6">
         <a href="#top" className="flex items-center gap-2">
-          <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-surface-2 text-ember-soft ring-1 ring-border-strong">
+          <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-linear-to-br from-brand to-brand-2 text-void">
             <SparkleIcon className="h-4 w-4" />
           </span>
           <span className="text-base font-semibold tracking-tight text-ink">
-            CareerForge <span className="text-gradient">AI</span>
+            CareerForge <span className="text-gradient-brand">AI</span>
           </span>
         </a>
 
-        <nav aria-label="Primary" className="hidden items-center gap-1 md:flex">
+        <nav aria-label="Primary" className="hidden items-center gap-1 lg:flex">
           {user
             ? appLinks.map((link) => {
                 const isActive =
@@ -84,23 +86,26 @@ export function SiteHeader() {
                   </Link>
                 );
               })
-            : marketingLinks.map((link) => (
-                <a
-                  key={link.href}
-                  href={link.href}
-                  className="rounded-lg px-3 py-2 text-sm text-ink-muted transition-colors hover:text-ink"
-                >
-                  {link.label}
-                </a>
-              ))}
+            : marketingLinks
+                .filter((link) => link.href !== '#top')
+                .map((link) => (
+                  <a
+                    key={link.href}
+                    href={link.href}
+                    className="rounded-lg px-3 py-2 text-sm text-ink-muted transition-colors hover:text-ink"
+                  >
+                    {link.label}
+                  </a>
+                ))}
         </nav>
 
-        <div className="hidden items-center gap-4 md:flex">
+        <div className="hidden items-center gap-3 lg:flex">
+          <ThemeToggle />
           {user ? (
             <>
               <Link
                 to="/generate"
-                className="rounded-full bg-linear-to-r from-ember-soft to-rose px-4 py-2 text-sm font-semibold text-void transition-transform hover:-translate-y-0.5"
+                className="rounded-full bg-linear-to-r from-brand to-brand-2 px-4 py-2 text-sm font-semibold text-void transition-transform hover:-translate-y-0.5"
               >
                 Generate
               </Link>
@@ -116,43 +121,46 @@ export function SiteHeader() {
               </Link>
               <Link
                 to="/generate"
-                className="rounded-full bg-linear-to-r from-ember-soft to-rose px-4 py-2 text-sm font-semibold text-void transition-transform hover:-translate-y-0.5"
+                className="rounded-full bg-linear-to-r from-brand to-brand-2 px-4 py-2 text-sm font-semibold text-void transition-transform hover:-translate-y-0.5"
               >
-                Get started
+                Get Started Free
               </Link>
             </>
           )}
         </div>
 
-        <button
-          type="button"
-          onClick={() => setMenuOpen((open) => !open)}
-          className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-border text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ember-soft md:hidden"
-          aria-expanded={menuOpen}
-          aria-label="Toggle navigation menu"
-        >
-          <span className="relative block h-3.5 w-4">
-            <span
-              className={`absolute left-0 h-px w-4 bg-current transition-transform duration-200 ${
-                menuOpen ? 'top-1.5 rotate-45' : 'top-0'
-              }`}
-            />
-            <span
-              className={`absolute left-0 top-1.5 h-px w-4 bg-current transition-opacity duration-200 ${
-                menuOpen ? 'opacity-0' : 'opacity-100'
-              }`}
-            />
-            <span
-              className={`absolute left-0 h-px w-4 bg-current transition-transform duration-200 ${
-                menuOpen ? 'top-1.5 -rotate-45' : 'top-3'
-              }`}
-            />
-          </span>
-        </button>
+        <div className="flex items-center gap-2 lg:hidden">
+          <ThemeToggle />
+          <button
+            type="button"
+            onClick={() => setMenuOpen((open) => !open)}
+            className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-border text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
+            aria-expanded={menuOpen}
+            aria-label="Toggle navigation menu"
+          >
+            <span className="relative block h-3.5 w-4">
+              <span
+                className={`absolute left-0 h-px w-4 bg-current transition-transform duration-200 ${
+                  menuOpen ? 'top-1.5 rotate-45' : 'top-0'
+                }`}
+              />
+              <span
+                className={`absolute left-0 top-1.5 h-px w-4 bg-current transition-opacity duration-200 ${
+                  menuOpen ? 'opacity-0' : 'opacity-100'
+                }`}
+              />
+              <span
+                className={`absolute left-0 h-px w-4 bg-current transition-transform duration-200 ${
+                  menuOpen ? 'top-1.5 -rotate-45' : 'top-3'
+                }`}
+              />
+            </span>
+          </button>
+        </div>
       </div>
 
       {menuOpen && (
-        <nav aria-label="Primary" className="animate-menu-in border-t border-border bg-void md:hidden">
+        <nav aria-label="Primary" className="animate-menu-in border-t border-border bg-void lg:hidden">
           <ul className="flex flex-col gap-1 px-6 py-4">
             {user
               ? appLinks.map((link) => {
@@ -190,7 +198,7 @@ export function SiteHeader() {
                   <Link
                     to="/generate"
                     onClick={() => setMenuOpen(false)}
-                    className="mt-1 block rounded-full bg-linear-to-r from-ember-soft to-rose px-4 py-2 text-center text-sm font-semibold text-void"
+                    className="mt-1 block rounded-full bg-linear-to-r from-brand to-brand-2 px-4 py-2 text-center text-sm font-semibold text-void"
                   >
                     Generate
                   </Link>
@@ -221,9 +229,9 @@ export function SiteHeader() {
                   <Link
                     to="/generate"
                     onClick={() => setMenuOpen(false)}
-                    className="mt-1 block rounded-full bg-linear-to-r from-ember-soft to-rose px-4 py-2 text-center text-sm font-semibold text-void"
+                    className="mt-1 block rounded-full bg-linear-to-r from-brand to-brand-2 px-4 py-2 text-center text-sm font-semibold text-void"
                   >
-                    Get started
+                    Get Started Free
                   </Link>
                 </li>
               </>

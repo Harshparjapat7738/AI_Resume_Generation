@@ -1,16 +1,14 @@
 import { useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
 import { Link, useLocation } from 'react-router-dom';
+import { ThemeToggle } from '@/components/layout/ThemeToggle';
 import {
   BarChartIcon,
-  DocumentIcon,
   GearIcon,
-  GridIcon,
   HomeIcon,
   LayersIcon,
   MailIcon,
   MenuIcon,
-  SendIcon,
   SparkleIcon,
   UserIcon,
   XIcon,
@@ -31,10 +29,7 @@ type NavItem =
 const NAV_ITEMS: NavItem[] = [
   { label: 'Dashboard', icon: HomeIcon, kind: 'link', to: '/dashboard', isActive: (p) => p === '/dashboard' },
   { label: 'Applications', icon: LayersIcon, kind: 'link', to: '/applications', isActive: (p) => p === '/applications' },
-  { label: 'Resumes', icon: DocumentIcon, kind: 'link', to: '/resumes', isActive: (p) => p === '/resumes' },
-  { label: 'Cover Letters', icon: SendIcon, kind: 'link', to: '/cover-letters', isActive: (p) => p === '/cover-letters' },
   { label: 'Emails', icon: MailIcon, kind: 'link', to: '/emails', isActive: (p) => p === '/emails' },
-  { label: 'Templates', icon: GridIcon, kind: 'link', to: '/templates', isActive: (p) => p === '/templates' },
   { label: 'Analytics', icon: BarChartIcon, kind: 'link', to: '/analytics', isActive: (p) => p === '/analytics' },
   { label: 'Profile', icon: UserIcon, kind: 'link', to: '/profile', isActive: (p) => p === '/profile' },
   { label: 'Settings', icon: GearIcon, kind: 'soon' },
@@ -121,17 +116,23 @@ export function DashboardSidebar({ userName, userEmail }: { userName: string; us
   );
 
   const accountCard = (
-    <div className="rounded-xl border border-border bg-surface-2/50 px-3 py-3">
-      <div className="flex items-center gap-2.5">
-        <span
-          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-linear-to-br from-ember-soft to-rose text-xs font-semibold text-void"
-          aria-hidden="true"
-        >
-          {userName.slice(0, 2).toUpperCase()}
-        </span>
-        <div className="min-w-0">
-          <p className="truncate text-sm font-medium text-ink">{userName}</p>
-          <p className="truncate text-xs text-ink-faint">{userEmail}</p>
+    <div className="space-y-3">
+      <div className="flex items-center justify-between px-1">
+        <span className="text-xs font-medium text-ink-faint">Theme</span>
+        <ThemeToggle />
+      </div>
+      <div className="rounded-xl border border-border bg-surface-2/50 px-3 py-3">
+        <div className="flex items-center gap-2.5">
+          <span
+            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-linear-to-br from-ember-soft to-rose text-xs font-semibold text-void"
+            aria-hidden="true"
+          >
+            {userName.slice(0, 2).toUpperCase()}
+          </span>
+          <div className="min-w-0">
+            <p className="truncate text-sm font-medium text-ink">{userName}</p>
+            <p className="truncate text-xs text-ink-faint">{userEmail}</p>
+          </div>
         </div>
       </div>
     </div>

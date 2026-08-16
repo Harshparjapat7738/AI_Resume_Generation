@@ -1,6 +1,6 @@
 import { Link } from 'react-router-dom';
 import { Card } from '@/components/ui/Card';
-import { ChevronRightIcon, DocumentIcon, GridIcon, MailIcon, SendIcon, StarIcon } from '../icons';
+import { ChevronRightIcon, DocumentIcon, MailIcon, SendIcon, StarIcon } from '../icons';
 
 // The first three destinations are the same real `/generate/job?type=...` route
 // OutputTypePage's own cards navigate to (see features/generate/OutputTypePage.tsx) — just
@@ -11,7 +11,6 @@ const ACTIONS = [
   { label: 'Create new resume', to: '/generate/job?type=RESUME_ONLY', icon: DocumentIcon, iconClassName: 'bg-ember/10 text-ember-soft' },
   { label: 'Write cover letter', to: '/generate/job?type=COVER_LETTER_ONLY', icon: SendIcon, iconClassName: 'bg-rose/10 text-rose' },
   { label: 'Compose email', to: '/generate/job?type=EMAIL_ONLY', icon: MailIcon, iconClassName: 'bg-mint/10 text-mint' },
-  { label: 'Browse templates', to: '/templates', icon: GridIcon, iconClassName: 'bg-surface-2 text-ink-muted' },
 ] as const;
 
 export function QuickActions() {

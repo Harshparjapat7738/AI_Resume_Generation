@@ -17,8 +17,10 @@ list, get, status lifecycle and history, all by reference, see ADR-017 — plus 
 generation, ADR-019, grounded cover-letter generation, ADR-020, and combined "Generate All"
 generation, ADR-022) are real. Everything else in §3 remains a planned contract, moving into
 §2 as it ships. JD file intake, resume version history, custom-upload and online templates,
-profile versions/import, Gmail-draft generation, DOCX rendering, and notification are not yet
-implemented.
+profile versions/import, Gmail-draft generation, and DOCX rendering are not yet implemented.
+(`notification-service`, which would have owned transactional/system email, was removed
+before it grew past a skeleton — ADR-035; the candidate-facing application-email feature
+above is unrelated and unaffected.)
 
 **Base URL** — everything public goes through the gateway: `http://localhost:8080`.
 Business services are not reachable from the host (ADR-007).
@@ -259,6 +261,41 @@ consumes, combined across **all six sections** (not just experience):
 `[{ evidenceId, type, title, organisation, description, technologies[], metrics[], startDate, endDate }]`.
 `type` is one of `EXPERIENCE · EDUCATION · SKILL · PROJECT · CERTIFICATION · ACHIEVEMENT`.
 
+**"My Templates"** (ADR-034) — a user's own uploaded Resume/Cover Letter files, a separate
+resource from the evidence sections above (`templates` collection, many rows per user, unlike
+the one-per-user `profiles` document). Uploaded once, referenced (never re-uploaded) at
+JD-optimization handoff time — see the frontend's `OptimizationResultPage`. No AI/structural
+analysis of any kind is performed on an uploaded file; it is stored and returned exactly as
+uploaded.
+
+**GET** `/api/profile/templates` — Bearer. Returns every template the caller owns, newest
+first: `[{ id, name, fileName, fileType, documentType, isDefault, byteSize, createdAt, updatedAt }]`.
+`fileType` is `PDF | DOCX`; `documentType` is `RESUME | COVER_LETTER | BOTH`. Never includes the
+internal storage key/bucket — there is no public file URL.
+
+**GET** `/api/profile/templates/{id}` — Bearer. One template; `404` if not owned.
+
+**POST** `/api/profile/templates` — Bearer, `multipart/form-data`: `file` (PDF or DOCX, ≤5 MB),
+`name?` (falls back to the filename minus its extension), `documentType?` (default `RESUME`).
+Rejects (`FILE_REJECTED`) an empty file, an unsupported extension, a file whose magic-byte
+signature doesn't match its extension (mislabelling is never trusted), one over the size limit,
+or an exact duplicate (same SHA-256) of a file the caller already saved. The very first template
+a user ever saves becomes their default automatically.
+
+**PUT** `/api/profile/templates/{id}` — Bearer. Body: `{ name }`. `404` if not owned.
+
+**POST** `/api/profile/templates/{id}/default` — Bearer. Makes this the caller's one default
+template, unsetting whichever template (if any) previously held it — a single default per user,
+not scoped per `documentType` (ADR-034 — there is no separate resume-flow/cover-letter-flow to
+pair a type-scoped default with any more). `404` if not owned.
+
+**DELETE** `/api/profile/templates/{id}` — Bearer. Removes the stored file and its metadata row
+together. `404` if not owned.
+
+**GET** `/api/profile/templates/{id}/download` — Bearer. Streams the original bytes back
+byte-for-byte, with `Content-Disposition: attachment` and the original filename. `404` if not
+owned — the only way to ever reach a stored file.
+
 ---
 
 ### jd-service
@@ -295,153 +332,22 @@ call, calls `ai-service` (`POST /internal/ai/jd-analysis`) and caches the result
 version; subsequent calls return the cached analysis. Response:
 `{ jobDescriptionId, title, company, seniority, keywords[], requirements[] }`.
 
+**POST** `/api/jd/{id}/optimize` — Bearer. `?refresh=false`. The JD-optimization operation
+(ADR-033) that replaced resume/cover-letter generation. Requires a confirmed JD; loads its
+cached analysis plus the caller's verified evidence from profile-service, calls `ai-service`
+(`POST /internal/ai/jd-optimization`), and persists the validated result. Returns targeting
+data, never a document. Re-reads an existing result for the same JD version unless
+`refresh=true` (use after a profile edit). `409 JD_NOT_CONFIRMED` unless confirmed;
+`422 VALIDATION_ERROR` when the JD has no requirements or the profile has no evidence;
+`502 AI_GENERATION_FAILED` / `429 RATE_LIMIT_EXCEEDED` on provider failure. Response:
+`{ id, jobDescriptionId, optimisation{ targetRole, targetCompany, keywords[], requirementMatches[],
+missingRequirements[], emphasis[] }, citedEvidenceIds[], createdAt }`.
+
+**GET** `/api/jd/{id}/optimization` — Bearer. The current optimization for this JD, `404` when
+none has been computed. Same response shape.
+
 **GET** `/api/jd` — Bearer. `?page&size` (defaults 0/20, size capped at 100). Returns
 `{ content[], page, size, totalElements, totalPages }`.
-
----
-
-### resume-service
-
-**Deviates from the async contract below — see ADR-013.**
-
----
-
-**POST** `/api/resumes/generate` — Bearer. Body: `{ "jobDescriptionId": "...", "templateId": "..." }`.
-`templateId` is optional — omitted or blank resolves to the default built-in template
-(`classic`), so existing callers that don't select a template keep working unchanged.
-
-Orchestrates: resolve the template (`templates` catalogue — 404 if missing, disabled, or an
-uploaded template owned by someone else) → load the confirmed JD's analysis (`jd-service`)
-and the caller's evidence inventory (`profile-service`) → `ai-service` evidence-selection →
-`ai-service` resume-content → persist. The template is resolved **before** any AI call, so an
-invalid selection fails fast without spending a Groq request. Runs **synchronously**; returns
-the finished result directly instead of a `202` + job id.
-
-Response `200`:
-
-```json
-{
-  "id": "...",
-  "jobDescriptionId": "...",
-  "templateId": "classic",
-  "templateVersion": "1",
-  "content": { "summary": {...}, "experienceBullets": [...], "skillsOrdering": [...] },
-  "evidenceMatches": [{ "requirementId": "REQ-001", "evidenceIds": ["EXP-001"], "matchStrength": "STRONG", "reason": "..." }],
-  "gaps": [{ "requirementId": "REQ-005", "text": "...", "type": "EDUCATION" }],
-  "grounding": { "passed": true, "violations": [], "checkedStatements": 3 },
-  "removedSections": [],
-  "createdAt": "..."
-}
-```
-
-`gaps` lists every requirement no evidence could support (`matchStrength: NONE`) — reported,
-never fabricated. `removedSections` lists statements that failed grounding twice and were
-dropped.
-
-**Status codes** `200` · `400 VALIDATION_ERROR` (no evidence, no requirements, or nothing
-matched) · `404` (JD, or template, not owned/found/disabled) · `409 JD_NOT_CONFIRMED` ·
-`502 AI_GENERATION_FAILED`
-
-**GET** `/api/resumes/{id}` — Bearer. Returns the same shape from storage — this is what
-makes the result page refresh-safe. `404` if not owned.
-
-**GET** `/api/resumes` — Bearer. `?page&size` (defaults 0/20, size capped at 100), newest
-first. Powers the `/dashboard` history screen. Response:
-`{ content: [{ id, jobDescriptionId, jobTitle, company, templateId, createdAt }], page, size, totalElements, totalPages }`.
-`jobTitle`/`company` are denormalised onto `resume_versions` at generation time from the JD
-analysis, so listing history never has to cross-call jd-service per row.
-
----
-
-**GET** `/api/resumes/templates?type=RESUME` — Bearer. Lists the active, selectable template
-catalogue (docs/DATABASE.md §3 "templates"; ADR-004, ADR-016). Only built-in templates exist
-today. Response:
-
-```json
-[{
-  "templateId": "classic",
-  "name": "Classic",
-  "description": "...",
-  "previewKey": "classic",
-  "type": "RESUME",
-  "version": "1",
-  "status": "ACTIVE",
-  "source": "BUILT_IN",
-  "supportedFormats": ["PDF", "DOCX"],
-  "atsSafe": true
-}]
-```
-
-**GET** `/api/resumes/templates/{id}` — Bearer. Single template; same shape as one array
-element above. `404` if missing, disabled, or (once uploads exist) owned by someone else.
-
----
-
-### document-service
-
-**Real Resume PDF rendering only — see ARCHITECTURE_DECISIONS.md ADR-018.** Cover letters,
-DOCX, and the async render-job contract `docs/API_CATALOG.md` §3 originally sketched for this
-service are not implemented; rendering runs synchronously, the same deviation pattern
-resume-service already established (ADR-013). The selectable template *catalogue* lives in
-resume-service (`GET /api/resumes/templates`, ADR-004) — this service only owns the
-renderable HTML/CSS behind each of those same three ids and turns one into a PDF.
-
----
-
-**POST** `/api/documents/resume-versions/{resumeVersionId}/render` — Bearer. Body:
-`{ "templateId": "..." }` (optional).
-
-Renders the resume version's structured content (grounded AI-written summary and experience
-bullets) merged with the caller's factual profile data (name, contact, dates, education,
-certifications, achievements — never AI-touched) into a PDF using the chosen template.
-Omitting `templateId` uses whichever template that resume version was actually generated
-with (`ResumeVersion.templateId`, ADR-016) — never a document-service-local default while
-that's available. Idempotent per `(resumeVersionId, format)`: re-rendering with the same
-template against unchanged content returns the already-stored artifact rather than
-re-uploading; a different template (or changed content) replaces it in place — one current
-PDF per resume version, not accumulating history.
-
-Response `200`:
-
-```json
-{
-  "id": "...",
-  "resumeVersionId": "...",
-  "format": "PDF",
-  "templateId": "modern-ats",
-  "templateVersion": "1",
-  "pageCount": 1,
-  "byteSize": 48213,
-  "sha256": "…",
-  "renderedAt": "..."
-}
-```
-
-**Status codes** `200` · `400 VALIDATION_ERROR` (unknown `templateId`) · `404` (resume
-version not owned) · `500 DOCUMENT_RENDER_FAILED` · `503 UPSTREAM_UNAVAILABLE`
-(resume-service or profile-service unreachable)
-
----
-
-**GET** `/api/documents/resume-versions/{resumeVersionId}` — Bearer. Metadata for an
-already-rendered PDF (same shape as above), so the result page can offer a download without
-re-rendering on every visit. `404` if this resume version has never been rendered — including
-every resume version generated before this feature existed; the frontend shows "PDF
-unavailable for this older generation" rather than an error in that case, and offers to
-render one on demand instead (nothing about older history is broken).
-
----
-
-**GET** `/api/documents/{id}/download` — Bearer. Streams the PDF bytes directly through this
-service (`Content-Type: application/pdf`, `Content-Disposition: attachment`). `404` if not
-owned.
-
-**Deviates from the presigned-URL contract `docs/API_CATALOG.md` §3 originally sketched.**
-MinIO/S3 is never reached directly from the browser — no storage endpoint, credential, or
-bucket detail is ever exposed to it, and the URL contains only an opaque Mongo id (the actual
-object key inside the bucket is a separate random UUID the client never sees). Simpler and at
-least as secure as a presigned URL, and avoids needing a browser-reachable S3 endpoint
-distinct from the internal Docker-network one MinIO is actually configured with.
 
 ---
 
@@ -740,6 +646,18 @@ AI_GENERATION_FAILED`
 above — the latest version. `404` if no cover letter has been generated for this application
 yet.
 
+**GET** `/api/applications/cover-letter-versions/{id}` — Bearer. A specific cover-letter
+version by its own id (not "the latest for some application") — reached by document-service
+(Feign, internal network) to render PDF/DOCX from (ADR-028). `404` if not owned.
+
+**GET** `/api/applications/cover-letter-versions/{id}/fallback-prompt?format=PDF|DOCX`
+(default `PDF`) — Bearer. The document-generation fallback: a complete, ready-to-paste
+external-AI prompt built deterministically from this cover-letter version's already-validated
+content, for when document-service could not produce a PDF/DOCX after its allowed retry —
+mirrors resume-service's `GET /api/resumes/{id}/fallback-prompt` exactly. Never calls
+ai-service; always available regardless of whether a render actually failed (stateless).
+Response: `{ coverLetterVersionId, outputFormat, prompt }`. `404` if not owned.
+
 ---
 
 ## 3. Planned endpoints
@@ -769,29 +687,6 @@ Text intake, URL intake, confirm and analysis are implemented — see §2. Still
 | Method | Path | Auth | Purpose |
 |---|---|---|---|
 | POST | `/api/jd/upload` | Bearer | Submit a PDF/DOCX/TXT file (multipart, ≤5 MB). |
-
-### Milestone 5 — resume-service
-
-Generation and read-back are implemented, synchronously (ADR-013) — see §2. Still planned:
-
-| Method | Path | Auth | Purpose |
-|---|---|---|---|
-| GET | `/api/resumes/generations/{jobId}` | Bearer | Async job status and failure code, once generation moves to a queue. |
-| GET | `/api/resumes/{id}/versions` | Bearer | Version history. |
-
-Template catalogue (`GET /api/resumes/templates`, `GET /api/resumes/templates/{id}`) is
-implemented — see §2. Custom-upload and online template sources are not (ADR-016).
-
-### Milestone 6 — document-service
-
-Real Resume PDF rendering (render, metadata read-back, authenticated download) is
-implemented — see §2 and ARCHITECTURE_DECISIONS.md ADR-018. Still planned:
-
-| Method | Path | Auth | Purpose |
-|---|---|---|---|
-| — | — | — | DOCX rendering (docx4j dependency is already present, unused). |
-| — | — | — | Cover-letter rendering, once application-service has content to render (Milestone 8). |
-| GET | `/api/documents/{id}/preview` | Bearer | A lighter preview payload distinct from the full download — today the frontend previews the same PDF bytes it downloads. |
 
 ### Milestone 7 — assessment-service
 
@@ -827,8 +722,7 @@ three outputs, independent per-output failure tracking and retry via
 ## 4. Internal APIs
 
 Not routed through the gateway and not reachable from a browser (ADR-012). Called only
-service-to-service on the internal network. Adding a public route to either service
-requires a new ADR.
+service-to-service on the internal network. Adding a public route requires a new ADR.
 
 | Method | Path | Service | Purpose | Status |
 |---|---|---|---|---|
@@ -838,7 +732,6 @@ requires a new ADR.
 | POST | `/internal/ai/resume-content` | ai-service | Stage 2: grounded content generation | ✅ Implemented |
 | POST | `/internal/ai/cover-letter` | ai-service | Grounded cover-letter content — see ADR-020 | ✅ Implemented |
 | POST | `/internal/ai/email-content` | ai-service | Grounded application-email highlight paragraph(s) — see ADR-019 | ✅ Implemented |
-| POST | `/internal/notifications/send` | notification-service | Queue a transactional email | Milestone 8 |
 
 ---
 
@@ -853,7 +746,7 @@ Response `200`:
 {
   "groqConfigured": true,
   "maskedApiKey": "gsk_…9f2a",
-  "model": "llama-3.3-70b-versatile",
+  "model": "openai/gpt-oss-120b",
   "baseUrl": "https://api.groq.com/openai/v1",
   "promptVersions": { "jd-analysis": 1, "evidence-selection": 1, "resume-content": 1 },
   "reachable": true,
@@ -894,7 +787,7 @@ Response `200` — `analysis` matches `schemas/jd-analysis.schema.json`:
     ],
     "keywords": ["java", "spring boot"]
   },
-  "provenance": { "promptVersion": "jd-analysis@v1", "model": "llama-3.3-70b-versatile",
+  "provenance": { "promptVersion": "jd-analysis@v1", "model": "openai/gpt-oss-120b",
                   "totalTokens": 1834, "regenerated": false }
 }
 ```

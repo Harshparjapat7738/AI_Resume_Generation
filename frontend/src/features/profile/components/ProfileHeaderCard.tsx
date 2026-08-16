@@ -1,3 +1,4 @@
+import { Link } from 'react-router-dom';
 import type { ProfileCompletion, ProfileResponse } from '@/services/profileApi';
 import { PROFILE_SECTIONS } from '../sections';
 
@@ -66,13 +67,21 @@ export function ProfileHeaderCard({
               <p className="text-xs text-ink-faint">
                 {completedCount} of {PROFILE_SECTIONS.length} sections completed
               </p>
-              <button
-                type="button"
-                onClick={onEditProfile}
-                className="shrink-0 text-xs font-medium text-ink-muted underline underline-offset-2 transition-colors hover:text-ink"
-              >
-                Edit profile
-              </button>
+              <div className="flex shrink-0 items-center gap-3">
+                <Link
+                  to="/profile/templates"
+                  className="text-xs font-medium text-ink-muted underline underline-offset-2 transition-colors hover:text-ink"
+                >
+                  My Templates
+                </Link>
+                <button
+                  type="button"
+                  onClick={onEditProfile}
+                  className="text-xs font-medium text-ink-muted underline underline-offset-2 transition-colors hover:text-ink"
+                >
+                  Edit profile
+                </button>
+              </div>
             </div>
           </div>
         </div>

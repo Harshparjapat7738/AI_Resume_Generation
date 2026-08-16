@@ -7,10 +7,9 @@ import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { DashboardShell } from '@/features/dashboard/components/DashboardShell';
 import { PageHeader } from '@/features/dashboard/components/PageHeader';
 import { SummaryCard } from '@/features/dashboard/components/SummaryCard';
-import { BarChartIcon, DocumentIcon, MailIcon, SendIcon } from '@/features/dashboard/icons';
+import { BarChartIcon, MailIcon, SendIcon } from '@/features/dashboard/icons';
 import { generationTypeLabel, statusStyle } from '@/features/dashboard/utils';
 import { listApplications, type ApplicationStatus, type GenerationType } from '@/services/applicationApi';
-import { listResumes } from '@/services/resumeApi';
 
 const STATUS_ORDER: ApplicationStatus[] = ['COMPLETED', 'PROCESSING', 'FAILED', 'DRAFT'];
 const TYPE_ORDER: GenerationType[] = ['RESUME_ONLY', 'COVER_LETTER_ONLY', 'EMAIL_ONLY', 'ALL'];
@@ -36,10 +35,9 @@ export function AnalyticsPage() {
     queryKey: ['applications', 'summary'],
     queryFn: () => listApplications(undefined, 0, FETCH_SIZE),
   });
-  const resumesQuery = useQuery({ queryKey: ['resumes', 'all'], queryFn: () => listResumes(0, FETCH_SIZE) });
 
-  const isLoading = applicationsQuery.isLoading || resumesQuery.isLoading;
-  const isError = applicationsQuery.isError || resumesQuery.isError;
+  const isLoading = applicationsQuery.isLoading;
+  const isError = applicationsQuery.isError;
   const applications = applicationsQuery.data?.content ?? [];
 
   const stats = useMemo(() => {
@@ -61,7 +59,6 @@ export function AnalyticsPage() {
     return { total, byStatus, byType, months, maxMonthCount, completed, failed, completionRate };
   }, [applications]);
 
-  const resumeCount = (resumesQuery.data?.totalElements ?? 0) + applications.filter((a) => a.resumeVersionId).length;
   const coverLetterCount = applications.filter((a) => a.coverLetterVersionId).length;
   const emailCount = applications.filter((a) => a.emailId).length;
 
@@ -77,7 +74,7 @@ export function AnalyticsPage() {
           />
 
           {isLoading && <p className="mt-6 text-sm text-ink-faint">Loading…</p>}
-          {isError && <ErrorBanner error={applicationsQuery.error ?? resumesQuery.error} />}
+          {isError && <ErrorBanner error={applicationsQuery.error} />}
 
           {!isLoading && !isError && stats.total === 0 && (
             <Card className="mt-6">
@@ -97,20 +94,6 @@ export function AnalyticsPage() {
           {!isLoading && !isError && stats.total > 0 && (
             <>
               <div className="mt-6 grid grid-cols-2 gap-4 lg:grid-cols-4">
-                <SummaryCard
-                  icon={<DocumentIcon className="h-5 w-5" />}
-                  iconClassName="bg-ember/10 text-ember-soft"
-                  label="Applications"
-                  count={stats.total}
-                  description="Total applications"
-                />
-                <SummaryCard
-                  icon={<DocumentIcon className="h-5 w-5" />}
-                  iconClassName="bg-mint/10 text-mint"
-                  label="Resumes"
-                  count={resumeCount}
-                  description="Total resumes"
-                />
                 <SummaryCard
                   icon={<SendIcon className="h-5 w-5" />}
                   iconClassName="bg-rose/10 text-rose"

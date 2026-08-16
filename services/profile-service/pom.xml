@@ -63,6 +63,12 @@
             <groupId>org.springframework.cloud</groupId>
             <artifactId>spring-cloud-starter-circuitbreaker-resilience4j</artifactId>
         </dependency>
+        <!-- "My Templates" file storage (ADR-034) — the same MinIO/S3 bucket the now-deleted
+             document-service used; profile-service is its only remaining consumer. -->
+        <dependency>
+            <groupId>io.minio</groupId>
+            <artifactId>minio</artifactId>
+        </dependency>
     </dependencies>
 
     <build>

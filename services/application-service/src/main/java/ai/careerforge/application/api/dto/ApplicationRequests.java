@@ -11,7 +11,7 @@ public final class ApplicationRequests {
     }
 
     /** {@code resumeVersionId} is optional: an application can be created before generation
-     *  runs (status stays {@code DRAFT}) or right after, in the same call as resume-service's
+     *  runs (status stays {@code DRAFT}) or right after, in the same call as the
      *  result (status derives to {@code COMPLETED}/{@code PROCESSING} — see
      *  {@code Application.deriveStatus}). */
     public record CreateApplicationRequest(

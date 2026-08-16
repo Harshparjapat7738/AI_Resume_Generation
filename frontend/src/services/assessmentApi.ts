@@ -1,21 +1,13 @@
 /**
- * assessment-service — see docs/API_CATALOG.md &sect;3 (Milestone 7).
+ * assessment-service — deterministic JD-fit scoring, keyed on the JD optimization (ADR-033).
  *
- * <p><strong>Scope deviation</strong> (ARCHITECTURE_DECISIONS.md ADR-014): the ATS checks
- * here score the generated resume's structured content, not a rendered PDF/DOCX — no
- * document-service exists yet to produce one. Still deterministic, still computed in Java,
- * never asked of the LLM.
+ * <p>ATS scoring was removed with resume generation: every one of its checks read a rendered
+ * resume's structure (section headings, bullet lengths, formatting), and no resume is produced
+ * any more. What survives is JD fit, which was always computed from the job description, the
+ * candidate's profile and the requirement-to-evidence mapping — still deterministic, still
+ * computed in Java, never asked of the LLM.
  */
 import { apiFetch } from './apiClient';
-
-export interface AtsCheck {
-  checkId: string;
-  label: string;
-  weight: number;
-  passRatio: number;
-  detail: string;
-  earned: number;
-}
 
 export interface RequirementMatch {
   requirementId: string;
@@ -33,10 +25,8 @@ export interface Recommendation {
 }
 
 export interface Assessment {
-  resumeVersionId: string;
-  atsScore: number;
-  atsChecks: AtsCheck[];
-  engineVersion: string;
+  jdOptimizationId: string;
+  jobDescriptionId: string;
   compatibilityScore: number;
   coverage: number;
   keywordMatch: number;
@@ -52,11 +42,15 @@ export interface Assessment {
   assessedAt: string;
 }
 
-/** Computes on first call; idempotent — safe to call again, returns the cached result. */
-export function assessResume(resumeVersionId: string): Promise<Assessment> {
-  return apiFetch<Assessment>(`/api/assessment/resume-versions/${resumeVersionId}`, { method: 'POST' });
+/**
+ * Scores the JD optimization for this job description. Computes on first call; idempotent —
+ * safe to call again, returns the cached result. Requires an optimization to already exist
+ * (`404` otherwise).
+ */
+export function assessOptimization(jobDescriptionId: string): Promise<Assessment> {
+  return apiFetch<Assessment>(`/api/assessment/${jobDescriptionId}`, { method: 'POST' });
 }
 
-export function getAssessment(resumeVersionId: string): Promise<Assessment> {
-  return apiFetch<Assessment>(`/api/assessment/resume-versions/${resumeVersionId}`);
+export function getAssessment(jobDescriptionId: string): Promise<Assessment> {
+  return apiFetch<Assessment>(`/api/assessment/${jobDescriptionId}`);
 }

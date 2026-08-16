@@ -15,4 +15,7 @@ public interface AiServiceClient {
 
     @PostMapping("/jd-analysis")
     JdAnalysisResponse analyseJd(@RequestBody JdAnalysisRequest request);
+
+    @PostMapping("/jd-optimization")
+    AiClientDtos.JdOptimizationResponse optimise(@RequestBody AiClientDtos.JdOptimizationRequest request);
 }

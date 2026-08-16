@@ -2,13 +2,10 @@ package ai.careerforge.assessment.service;
 
 import ai.careerforge.assessment.client.ClientDtos.JdAnalysisDto;
 import ai.careerforge.assessment.client.ClientDtos.ProfileDto;
-import ai.careerforge.assessment.client.ClientDtos.ResumeVersionDto;
+import ai.careerforge.assessment.client.ClientDtos.JdOptimizationDto;
 import ai.careerforge.assessment.client.JdServiceClient;
 import ai.careerforge.assessment.client.ProfileServiceClient;
-import ai.careerforge.assessment.client.ResumeServiceClient;
-import ai.careerforge.assessment.domain.AtsAssessment;
 import ai.careerforge.assessment.domain.JdFitAssessment;
-import ai.careerforge.assessment.repository.AtsAssessmentRepository;
 import ai.careerforge.assessment.repository.JdFitAssessmentRepository;
 import ai.careerforge.common.error.ApiException;
 import ai.careerforge.common.error.ErrorCode;
@@ -19,87 +16,85 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 /**
- * Orchestrates ATS + JD-fit scoring: pulls the already-generated resume (resume-service),
- * its JD analysis (jd-service) and the candidate's profile (profile-service), runs both
- * deterministic engines, and persists the result. Nothing here calls an LLM — see
- * {@link AtsScoringEngine} and {@link JdFitScoringEngine}.
+ * Orchestrates JD-fit scoring: pulls the persisted JD optimization and its analysis
+ * (jd-service) plus the candidate's profile (profile-service), runs the deterministic engine,
+ * and persists the result. Nothing here calls an LLM — see {@link JdFitScoringEngine}.
+ *
+ * <p>Keyed on the optimization, not a resume version (ADR-033). Scoring is still entirely
+ * deterministic Java; only its input moved.
  */
 @Service
 public class AssessmentService {
 
     private static final Logger log = LoggerFactory.getLogger(AssessmentService.class);
 
-    private final ResumeServiceClient resumeServiceClient;
     private final JdServiceClient jdServiceClient;
     private final ProfileServiceClient profileServiceClient;
-    private final AtsScoringEngine atsScoringEngine;
     private final JdFitScoringEngine jdFitScoringEngine;
-    private final AtsAssessmentRepository atsAssessments;
     private final JdFitAssessmentRepository jdFitAssessments;
 
-    public AssessmentService(ResumeServiceClient resumeServiceClient, JdServiceClient jdServiceClient,
-                             ProfileServiceClient profileServiceClient, AtsScoringEngine atsScoringEngine,
-                             JdFitScoringEngine jdFitScoringEngine, AtsAssessmentRepository atsAssessments,
+    public AssessmentService(JdServiceClient jdServiceClient, ProfileServiceClient profileServiceClient,
+                             JdFitScoringEngine jdFitScoringEngine,
                              JdFitAssessmentRepository jdFitAssessments) {
-        this.resumeServiceClient = resumeServiceClient;
         this.jdServiceClient = jdServiceClient;
         this.profileServiceClient = profileServiceClient;
-        this.atsScoringEngine = atsScoringEngine;
         this.jdFitScoringEngine = jdFitScoringEngine;
-        this.atsAssessments = atsAssessments;
         this.jdFitAssessments = jdFitAssessments;
     }
 
-    public record Assessment(AtsAssessment ats, JdFitAssessment jdFit) {
+    /**
+     * ATS scoring was dropped with resume generation (ADR-033): every one of its checks read a
+     * rendered/structured resume — section headings, bullet lengths, formatting — and there is
+     * no resume to read any more. What survives is JD fit, which was always computed from the
+     * JD, the profile and the requirement/evidence mapping.
+     */
+    public record Assessment(JdFitAssessment jdFit) {
     }
 
     /** Computes and persists on first call; returns the cached result on every call after. */
-    public Assessment assess(String userId, String resumeVersionId) {
-        var existingAts = atsAssessments.findByResumeVersionIdAndUserId(resumeVersionId, userId);
-        var existingFit = jdFitAssessments.findByResumeVersionIdAndUserId(resumeVersionId, userId);
-        if (existingAts.isPresent() && existingFit.isPresent()) {
-            return new Assessment(existingAts.get(), existingFit.get());
+    public Assessment assess(String userId, String jobDescriptionId) {
+        JdOptimizationDto optimization = fetchOptimization(jobDescriptionId);
+        var existingFit = jdFitAssessments.findByJdOptimizationIdAndUserId(optimization.id(), userId);
+        if (existingFit.isPresent()) {
+            return new Assessment(existingFit.get());
         }
 
-        ResumeVersionDto resume = fetchResume(resumeVersionId);
-        JdAnalysisDto jdAnalysis = fetchJdAnalysis(resume.jobDescriptionId());
+        JdAnalysisDto jdAnalysis = fetchJdAnalysis(jobDescriptionId);
         ProfileDto profile = fetchProfile();
         List<ai.careerforge.assessment.client.ClientDtos.ExperienceDto> experiences =
                 profile.experiences() == null ? List.of() : profile.experiences();
 
-        var checks = atsScoringEngine.score(resume, profile.personalInformation(), experiences, jdAnalysis.keywords());
-        AtsAssessment ats = atsAssessments.save(
-                new AtsAssessment(resumeVersionId, userId, checks, AtsScoringEngine.ENGINE_VERSION));
-
-        JdFitScoringEngine.Result fitResult = jdFitScoringEngine.score(resume, jdAnalysis, experiences);
+        JdFitScoringEngine.Result fitResult = jdFitScoringEngine.score(optimization, jdAnalysis, experiences);
         JdFitAssessment fit = jdFitAssessments.save(new JdFitAssessment(
-                resumeVersionId, userId, resume.jobDescriptionId(), fitResult.compatibilityScore(),
+                optimization.id(), userId, jobDescriptionId, fitResult.compatibilityScore(),
                 fitResult.coverage(), fitResult.keywordMatch(), fitResult.seniorityMatch(), fitResult.recency(),
                 fitResult.requirementMatches(), fitResult.unmetHardRequirements(), fitResult.matchedKeywords(),
                 fitResult.missingKeywords(), fitResult.readinessBand(), fitResult.bandRule(),
                 fitResult.recommendations()));
 
-        return new Assessment(ats, fit);
+        return new Assessment(fit);
     }
 
-    public Assessment requireExisting(String userId, String resumeVersionId) {
-        AtsAssessment ats = atsAssessments.findByResumeVersionIdAndUserId(resumeVersionId, userId)
+    public Assessment requireExisting(String userId, String jobDescriptionId) {
+        JdOptimizationDto optimization = fetchOptimization(jobDescriptionId);
+        JdFitAssessment fit = jdFitAssessments.findByJdOptimizationIdAndUserId(optimization.id(), userId)
                 .orElseThrow(() -> new ApiException(ErrorCode.RESOURCE_NOT_FOUND));
-        JdFitAssessment fit = jdFitAssessments.findByResumeVersionIdAndUserId(resumeVersionId, userId)
-                .orElseThrow(() -> new ApiException(ErrorCode.RESOURCE_NOT_FOUND));
-        return new Assessment(ats, fit);
+        return new Assessment(fit);
     }
 
-    private ResumeVersionDto fetchResume(String resumeVersionId) {
+    private JdOptimizationDto fetchOptimization(String jobDescriptionId) {
         try {
-            return resumeServiceClient.getResume(resumeVersionId);
+            return jdServiceClient.getOptimization(jobDescriptionId);
         } catch (FeignException.NotFound ex) {
+            // No optimization (or not this caller's) — indistinguishable by design (ADR-007).
             throw ApiException.notOwned();
         } catch (FeignException ex) {
-            log.warn("resume-service call failed for resumeVersionId={}: {}", resumeVersionId, ex.getMessage());
+            log.warn("jd-service optimization call failed for jobDescriptionId={}: {}",
+                    jobDescriptionId, ex.status());
             throw new ApiException(ErrorCode.UPSTREAM_UNAVAILABLE);
         }
     }
+
 
     private JdAnalysisDto fetchJdAnalysis(String jobDescriptionId) {
         try {

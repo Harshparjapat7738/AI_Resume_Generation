@@ -3,6 +3,7 @@ import { Link, useLocation } from 'react-router-dom';
 import { logout as logoutRequest } from '@/services/authApi';
 import { useSession, useSessionActions } from '@/services/session';
 import { GridIcon, SparkleIcon, UserIcon } from './icons';
+import { ThemeToggle } from './ThemeToggle';
 import { UserMenu } from './UserMenu';
 
 const navLinks = [
@@ -88,7 +89,8 @@ export function AppHeader() {
               })}
             </nav>
 
-            <div className="hidden items-center gap-4 md:flex">
+            <div className="hidden items-center gap-3 md:flex">
+              <ThemeToggle />
               <Link
                 to="/generate"
                 className="rounded-full bg-linear-to-r from-ember-soft to-rose px-4 py-2 text-sm font-semibold text-void transition-transform hover:-translate-y-0.5"
@@ -98,31 +100,34 @@ export function AppHeader() {
               <UserMenu user={user} onLogout={handleLogout} />
             </div>
 
-            <button
-              type="button"
-              onClick={() => setMenuOpen((open) => !open)}
-              className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-border text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ember-soft md:hidden"
-              aria-expanded={menuOpen}
-              aria-label="Toggle navigation menu"
-            >
-              <span className="relative block h-3.5 w-4">
-                <span
-                  className={`absolute left-0 h-px w-4 bg-current transition-transform duration-200 ${
-                    menuOpen ? 'top-1.5 rotate-45' : 'top-0'
-                  }`}
-                />
-                <span
-                  className={`absolute left-0 top-1.5 h-px w-4 bg-current transition-opacity duration-200 ${
-                    menuOpen ? 'opacity-0' : 'opacity-100'
-                  }`}
-                />
-                <span
-                  className={`absolute left-0 h-px w-4 bg-current transition-transform duration-200 ${
-                    menuOpen ? 'top-1.5 -rotate-45' : 'top-3'
-                  }`}
-                />
-              </span>
-            </button>
+            <div className="flex items-center gap-2 md:hidden">
+              <ThemeToggle />
+              <button
+                type="button"
+                onClick={() => setMenuOpen((open) => !open)}
+                className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-border text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ember-soft"
+                aria-expanded={menuOpen}
+                aria-label="Toggle navigation menu"
+              >
+                <span className="relative block h-3.5 w-4">
+                  <span
+                    className={`absolute left-0 h-px w-4 bg-current transition-transform duration-200 ${
+                      menuOpen ? 'top-1.5 rotate-45' : 'top-0'
+                    }`}
+                  />
+                  <span
+                    className={`absolute left-0 top-1.5 h-px w-4 bg-current transition-opacity duration-200 ${
+                      menuOpen ? 'opacity-0' : 'opacity-100'
+                    }`}
+                  />
+                  <span
+                    className={`absolute left-0 h-px w-4 bg-current transition-transform duration-200 ${
+                      menuOpen ? 'top-1.5 -rotate-45' : 'top-3'
+                    }`}
+                  />
+                </span>
+              </button>
+            </div>
           </>
         )}
       </div>

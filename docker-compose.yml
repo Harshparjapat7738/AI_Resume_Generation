@@ -190,6 +190,9 @@ services:
     depends_on:
       config-server: { condition: service_healthy }
       discovery-server: { condition: service_healthy }
+      # "My Templates" file storage (ADR-034) — the same MinIO bucket the now-deleted
+      # document-service used to depend on.
+      minio: { condition: service_healthy }
 
   jd-service:
     <<: *service-base
@@ -204,18 +207,6 @@ services:
       config-server: { condition: service_healthy }
       discovery-server: { condition: service_healthy }
 
-  resume-service:
-    <<: *service-base
-    profiles: [app]
-    container_name: careerforge-resume
-    build: { context: ., dockerfile: services/resume-service/Dockerfile }
-    environment:
-      <<: *service-env
-    expose: ["8084"]
-    depends_on:
-      redis: { condition: service_healthy }
-      config-server: { condition: service_healthy }
-      discovery-server: { condition: service_healthy }
 
   ai-service:
     <<: *service-base
@@ -242,19 +233,6 @@ services:
       config-server: { condition: service_healthy }
       discovery-server: { condition: service_healthy }
 
-  document-service:
-    <<: *service-base
-    profiles: [app]
-    container_name: careerforge-document
-    build: { context: ., dockerfile: services/document-service/Dockerfile }
-    environment:
-      <<: *service-env
-      S3_ENDPOINT: http://minio:9000
-    expose: ["8087"]
-    depends_on:
-      minio: { condition: service_healthy }
-      config-server: { condition: service_healthy }
-      discovery-server: { condition: service_healthy }
 
   application-service:
     <<: *service-base
@@ -265,19 +243,6 @@ services:
       <<: *service-env
     expose: ["8088"]
     depends_on:
-      config-server: { condition: service_healthy }
-      discovery-server: { condition: service_healthy }
-
-  notification-service:
-    <<: *service-base
-    profiles: [app]
-    container_name: careerforge-notification
-    build: { context: ., dockerfile: services/notification-service/Dockerfile }
-    environment:
-      <<: *service-env
-    expose: ["8089"]
-    depends_on:
-      redis: { condition: service_healthy }
       config-server: { condition: service_healthy }
       discovery-server: { condition: service_healthy }
 

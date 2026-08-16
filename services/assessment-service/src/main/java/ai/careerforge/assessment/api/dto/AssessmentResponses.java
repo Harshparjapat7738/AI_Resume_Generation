@@ -8,9 +8,6 @@ public final class AssessmentResponses {
     private AssessmentResponses() {
     }
 
-    public record CheckResponse(String checkId, String label, double weight, double passRatio, String detail, double earned) {
-    }
-
     public record RequirementMatchResponse(
             String requirementId, String text, String type, String matchStrength, List<String> evidenceIds) {
     }
@@ -18,12 +15,13 @@ public final class AssessmentResponses {
     public record RecommendationResponse(String type, String severity, String message, String relatedRequirementId) {
     }
 
-    /** Combined ATS + JD-fit result — the two are always read together on the result page. */
+    /**
+     * JD-fit result. ATS scoring was dropped with resume generation (ADR-033) — every check it
+     * ran read a rendered resume's structure, and no resume is produced any more.
+     */
     public record AssessmentResponse(
-            String resumeVersionId,
-            double atsScore,
-            List<CheckResponse> atsChecks,
-            String engineVersion,
+            String jdOptimizationId,
+            String jobDescriptionId,
             double compatibilityScore,
             double coverage,
             double keywordMatch,

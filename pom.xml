@@ -26,12 +26,9 @@
         <module>services/auth-service</module>
         <module>services/profile-service</module>
         <module>services/jd-service</module>
-        <module>services/resume-service</module>
         <module>services/ai-service</module>
         <module>services/assessment-service</module>
-        <module>services/document-service</module>
         <module>services/application-service</module>
-        <module>services/notification-service</module>
     </modules>
 
     <properties>
@@ -53,6 +50,9 @@
         <jsoup.version>1.19.1</jsoup.version>
         <minio.version>8.5.17</minio.version>
         <networknt-schema.version>1.5.6</networknt-schema.version>
+        <!-- Official Google Gen AI Java SDK (googleapis/java-genai), reached General
+             Availability May 2025 — current release per Maven Central as of this change
+             (ADR-025). Supersedes the deprecated google-generativeai/vertexai client libs. -->
     </properties>
 
     <dependencyManagement>
@@ -155,6 +155,24 @@
                 <plugin>
                     <groupId>org.springframework.boot</groupId>
                     <artifactId>spring-boot-maven-plugin</artifactId>
+                </plugin>
+                <plugin>
+                    <!-- Mockito's bundled Byte Buddy does not yet officially recognise every
+                         JDK a developer machine or CI runner might have installed (Byte Buddy
+                         gates on the exact major version it has validated against, ahead of
+                         each new JDK release — see net.bytebuddy.utility.OpenedClassReader).
+                         When that happens, Byte Buddy's own error message names this exact
+                         system property as the fix: run its class-file parsing in
+                         forward-compatible "experimental" mode rather than failing outright.
+                         Harmless on a fully-supported JDK — this only changes behaviour when
+                         the strict version gate would otherwise reject the runtime. Needed for
+                         Mockito to mock concrete (non-interface) classes at all on such a JDK;
+                         mocking interfaces was never affected. -->
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-surefire-plugin</artifactId>
+                    <configuration>
+                        <argLine>-Dnet.bytebuddy.experimental=true</argLine>
+                    </configuration>
                 </plugin>
             </plugins>
         </pluginManagement>

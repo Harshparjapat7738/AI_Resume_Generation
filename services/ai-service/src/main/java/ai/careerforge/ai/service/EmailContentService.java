@@ -3,7 +3,7 @@ package ai.careerforge.ai.service;
 import ai.careerforge.ai.api.dto.AiRequests;
 import ai.careerforge.ai.api.dto.AiResponses;
 import ai.careerforge.ai.api.dto.EvidenceItem;
-import ai.careerforge.ai.client.GroqClient;
+import ai.careerforge.ai.client.AiChatClient;
 import ai.careerforge.ai.grounding.GroundingReport;
 import ai.careerforge.ai.grounding.GroundingValidator;
 import ai.careerforge.ai.grounding.GroundingValidator.GeneratedStatement;
@@ -45,17 +45,17 @@ public class EmailContentService {
     private static final String SCHEMA = "email-content.schema.json";
     private static final int MAX_EVIDENCE_CHARS = 40_000;
 
-    private final GroqClient groqClient;
+    private final AiChatClient aiChatClient;
     private final PromptRegistry promptRegistry;
     private final AiGenerationSupport support;
     private final GroundingValidator groundingValidator;
     private final ObjectMapper objectMapper;
 
-    public EmailContentService(GroqClient groqClient, PromptRegistry promptRegistry,
+    public EmailContentService(AiChatClient aiChatClient, PromptRegistry promptRegistry,
                                AiGenerationSupport support,
                                GroundingValidator groundingValidator,
                                ObjectMapper objectMapper) {
-        this.groqClient = groqClient;
+        this.aiChatClient = aiChatClient;
         this.promptRegistry = promptRegistry;
         this.support = support;
         this.groundingValidator = groundingValidator;
@@ -69,19 +69,19 @@ public class EmailContentService {
                 ? Set.of(request.jobTitle())
                 : Set.of(request.jobTitle(), request.company());
 
-        GroqClient.GroqResult first = groqClient.complete(prompt.body(), userContent, PROMPT);
+        AiChatClient.AiChatResult first = aiChatClient.complete(prompt.body(), userContent, PROMPT);
         JsonNode content = support.validateSchema(first.content(), SCHEMA, PROMPT);
         GroundingReport report = groundingValidator.validate(
                 extractStatements(content), request.evidence(), allowedContext);
 
         boolean regenerated = false;
-        GroqClient.GroqResult used = first;
+        AiChatClient.AiChatResult used = first;
 
         if (!report.passed()) {
             log.warn("Grounding failed on first attempt, regenerating once: {}", report.summary());
             regenerated = true;
 
-            GroqClient.GroqResult second = groqClient.complete(
+            AiChatClient.AiChatResult second = aiChatClient.complete(
                     prompt.body(), userContent + "\n\n" + correctionNotice(report), PROMPT);
             JsonNode retryContent = support.validateSchema(second.content(), SCHEMA, PROMPT);
             GroundingReport retryReport = groundingValidator.validate(

@@ -3,7 +3,7 @@ package ai.careerforge.ai.service;
 import ai.careerforge.ai.api.dto.AiRequests;
 import ai.careerforge.ai.api.dto.AiResponses;
 import ai.careerforge.ai.api.dto.EvidenceItem;
-import ai.careerforge.ai.client.GroqClient;
+import ai.careerforge.ai.client.AiChatClient;
 import ai.careerforge.ai.prompt.PromptRegistry;
 import ai.careerforge.ai.prompt.UntrustedContent;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -21,6 +21,13 @@ import org.springframework.stereotype.Service;
  * <p>Model output is filtered before it is returned: any cited evidence id that does not
  * exist in the supplied inventory is stripped. Grounding runs again on the generated text
  * in stage 2, but catching a hallucinated id here stops it propagating into a prompt.
+ *
+ * <p><strong>Groq only</strong> (ADR-033) — see
+ * {@code JdAnalysisService}'s own Javadoc for the full reasoning; this class went through the
+ * identical migration and reversal. Nothing else about this class changed: same prompt, same
+ * schema, same {@link #stripUnknownEvidenceIds} post-processing (this stage's own "surgical
+ * removal" — it never used {@code GroundingValidator} or a regenerate-on-failure loop to begin
+ * with; that pattern belongs to the content-generation stage, not evidence selection), same response shape.
  */
 @Service
 public class EvidenceSelectionService {
@@ -30,11 +37,11 @@ public class EvidenceSelectionService {
     private static final String PROMPT = "evidence-selection";
     private static final String SCHEMA = "evidence-selection.schema.json";
 
-    private final GroqClient groqClient;
+    private final AiChatClient aiChatClient;
     private final AiGenerationSupport support;
 
-    public EvidenceSelectionService(GroqClient groqClient, AiGenerationSupport support) {
-        this.groqClient = groqClient;
+    public EvidenceSelectionService(AiChatClient aiChatClient, AiGenerationSupport support) {
+        this.aiChatClient = aiChatClient;
         this.support = support;
     }
 
@@ -56,7 +63,7 @@ public class EvidenceSelectionService {
         String userContent = UntrustedContent.fence("REQUIREMENTS", requirements, 30_000)
                 + "\n\n" + UntrustedContent.fence("EVIDENCE", evidence, 40_000);
 
-        GroqClient.GroqResult result = groqClient.complete(prompt.body(), userContent, PROMPT);
+        AiChatClient.AiChatResult result = aiChatClient.complete(prompt.body(), userContent, PROMPT);
         JsonNode selection = support.validateSchema(result.content(), SCHEMA, PROMPT);
 
         stripUnknownEvidenceIds(selection, request.evidence().stream()

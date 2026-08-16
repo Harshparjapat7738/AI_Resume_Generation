@@ -6,5 +6,5 @@ import org.springframework.data.mongodb.repository.MongoRepository;
 
 public interface JdFitAssessmentRepository extends MongoRepository<JdFitAssessment, String> {
 
-    Optional<JdFitAssessment> findByResumeVersionIdAndUserId(String resumeVersionId, String userId);
+    Optional<JdFitAssessment> findByJdOptimizationIdAndUserId(String jdOptimizationId, String userId);
 }

@@ -66,22 +66,6 @@ public final class ApplicationResponses {
             Instant createdAt) {
     }
 
-    /** Full cover-letter version — the model's grounded content plus its verification report,
-     *  mirroring resume-service's {@code ResumeVersionResponse} shape (both store {@code
-     *  content}/{@code grounding} as opaque, already-validated JSON). */
-    public record CoverLetterVersionResponse(
-            String id,
-            String applicationId,
-            String jobDescriptionId,
-            String jobTitle,
-            String company,
-            int version,
-            java.util.Map<String, Object> content,
-            java.util.Map<String, Object> grounding,
-            List<String> removedParagraphs,
-            Instant createdAt) {
-    }
-
     public record PageResponse<T>(List<T> content, int page, int size, long totalElements, int totalPages) {
     }
 }

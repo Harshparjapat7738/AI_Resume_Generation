@@ -1,11 +1,8 @@
 package ai.careerforge.assessment.api;
 
 import ai.careerforge.assessment.api.dto.AssessmentResponses.AssessmentResponse;
-import ai.careerforge.assessment.api.dto.AssessmentResponses.CheckResponse;
 import ai.careerforge.assessment.api.dto.AssessmentResponses.RecommendationResponse;
 import ai.careerforge.assessment.api.dto.AssessmentResponses.RequirementMatchResponse;
-import ai.careerforge.assessment.domain.AtsAssessment;
-import ai.careerforge.assessment.domain.AtsCheckResult;
 import ai.careerforge.assessment.domain.JdFitAssessment;
 import ai.careerforge.assessment.domain.RecommendationItem;
 import ai.careerforge.assessment.domain.RequirementMatchResult;
@@ -32,26 +29,24 @@ public class AssessmentController {
         this.assessmentService = assessmentService;
     }
 
-    /** Computes on first call; idempotent — returns the cached result thereafter. */
-    @PostMapping("/{resumeVersionId}")
-    public ResponseEntity<AssessmentResponse> assess(@CallerId String userId, @PathVariable String resumeVersionId) {
-        return ResponseEntity.ok(toResponse(assessmentService.assess(userId, resumeVersionId)));
+    /** Scores the JD optimization for this job description (ADR-033). Computes on first call;
+     *  idempotent — returns the cached result thereafter. */
+    @PostMapping("/{jobDescriptionId}")
+    public ResponseEntity<AssessmentResponse> assess(@CallerId String userId, @PathVariable String jobDescriptionId) {
+        return ResponseEntity.ok(toResponse(assessmentService.assess(userId, jobDescriptionId)));
     }
 
-    @GetMapping("/{resumeVersionId}")
-    public ResponseEntity<AssessmentResponse> get(@CallerId String userId, @PathVariable String resumeVersionId) {
-        return ResponseEntity.ok(toResponse(assessmentService.requireExisting(userId, resumeVersionId)));
+    @GetMapping("/{jobDescriptionId}")
+    public ResponseEntity<AssessmentResponse> get(@CallerId String userId, @PathVariable String jobDescriptionId) {
+        return ResponseEntity.ok(toResponse(assessmentService.requireExisting(userId, jobDescriptionId)));
     }
 
     private static AssessmentResponse toResponse(AssessmentService.Assessment assessment) {
-        AtsAssessment ats = assessment.ats();
         JdFitAssessment fit = assessment.jdFit();
 
         return new AssessmentResponse(
-                ats.resumeVersionId(),
-                ats.totalScore(),
-                ats.checks().stream().map(AssessmentController::toCheck).toList(),
-                ats.engineVersion(),
+                fit.jdOptimizationId(),
+                fit.jobDescriptionId(),
                 fit.compatibilityScore(),
                 fit.coverage(),
                 fit.keywordMatch(),
@@ -67,9 +62,6 @@ public class AssessmentController {
                 fit.assessedAt());
     }
 
-    private static CheckResponse toCheck(AtsCheckResult c) {
-        return new CheckResponse(c.checkId(), c.label(), c.weight(), c.passRatio(), c.detail(), c.earned());
-    }
 
     private static RequirementMatchResponse toMatch(RequirementMatchResult m) {
         return new RequirementMatchResponse(m.requirementId(), m.text(), m.type(), m.matchStrength(), m.evidenceIds());

@@ -1,66 +1,46 @@
 # CareerForge AI
-#  .\scripts\run-local.ps1 -Services all -SkipBuild
-> Turn one verified professional profile into a job-specific application that is relevant,
-> ATS-friendly, explainable, and grounded in your real experience.
+> Turn one verified professional profile and a job description into grounded, structured
+> **JD-optimization data** you can take to any document tool.
 
-CareerForge AI stores a candidate's verified professional information and generates a
-tailored resume, cover letter and application email from a job description — then scores
-the result against that JD and explains exactly what matches and what is missing.
+CareerForge AI stores a candidate's verified professional information, analyses a job
+description against it, and produces structured optimization data: which of the posting's
+keywords the profile can actually evidence, which requirements it cannot meet, and which
+experience to lead with. You export that as JSON or a ready-to-paste external AI prompt and
+create the resume or cover letter wherever you like.
 
-**The core principle:** the AI may select, rank, condense and rephrase facts the user
-supplied. It must never invent an employer, a date, a metric, a technology, a
-certification, a project or an achievement. Every generated statement traces back to an
-evidence ID in the user's profile, and content that cannot be traced is removed and
-reported as a gap.
+**CareerForge does not generate a resume or cover letter and produces no PDF/DOCX**
+([ADR-033](docs/ARCHITECTURE_DECISIONS.md#adr-033)). Application **email** content generation
+remains an active feature.
 
-The product does not promise a job, and it does not display a fabricated hiring
-probability.
+**The core principle:** the AI may select, rank, classify and map facts the user supplied. It
+must never invent an employer, a date, a metric, a technology, a certification, a project or an
+achievement. Every candidate-facing value in an optimization is an evidence ID that exists in
+the user's profile; anything else is stripped. A requirement the profile cannot support is
+reported as a gap — never dressed up as a qualification.
+
+The product does not promise a job, and it does not display a fabricated hiring probability.
 
 ---
 
+
 ## Status
 
-**A first real vertical slice is live, ahead of the milestone-by-milestone plan.** The
-platform tier (Maven reactor, Docker stack, Config Server, Eureka, API Gateway,
-observability, CI) is in place and runs, and so is an end-to-end product path:
+**The JD-optimization path is live end to end:**
 
-**Register → build a complete profile (personal info, education, experience, skills,
-projects, certifications, achievements) → paste a job description → confirm it → see it
-analysed → generate grounded resume content → see a real ATS/JD-fit score, honestly
-reported gaps and recommendations.**
+**Register → build a profile → paste a job description → confirm it → see it analysed →
+generate a JD optimization → view keywords, matches, gaps and emphasis → copy/download the
+JSON or the external AI prompt.**
 
-`auth-service` (email/password, plus Google sign-in — Authorization Code + PKCE, ID token
-verified against Google's JWKS, links to or creates a CareerForge account; backend and
-tests are in, no frontend entry point yet), `profile-service` (all six evidence-bearing
-sections via an 8-step onboarding wizard and an always-editable `/profile` page),
-`jd-service` (paste or URL intake — the URL path is a server-side fetch behind an SSRF
-guard, never browser-side scraping, see
-[ADR-015](docs/ARCHITECTURE_DECISIONS.md#adr-015) — plus confirm and analysis),
-`resume-service` (generation — synchronous, see
-[ADR-013](docs/ARCHITECTURE_DECISIONS.md#adr-013) — plus a built-in template catalogue, see
-[ADR-016](docs/ARCHITECTURE_DECISIONS.md#adr-016)), `document-service` (real Resume PDF
-rendering against the selected template, streamed through an authenticated download endpoint
-— see [ADR-018](docs/ARCHITECTURE_DECISIONS.md#adr-018)), `assessment-service` (ATS + JD-fit
-scoring, scoped to structured content rather than a rendered document — see
-[ADR-014](docs/ARCHITECTURE_DECISIONS.md#adr-014)) and `application-service` (the central
-`Application` aggregate that ties a job, its generation type, template, resume and
-assessments together by reference — see
-[ADR-017](docs/ARCHITECTURE_DECISIONS.md#adr-017)) are real, alongside `ai-service`, which
-was implemented ahead of schedule: Groq client with retries and metrics, versioned prompts,
-JSON Schema validation, and the grounding validator that enforces the no-fabrication rule.
+`auth-service` (email/password plus Google sign-in), `profile-service` (six evidence-bearing
+sections via onboarding and `/profile`), `jd-service` (paste or SSRF-guarded URL intake,
+confirmation, analysis, **and JD optimization** — [ADR-033](docs/ARCHITECTURE_DECISIONS.md#adr-033)),
+`ai-service` (Groq client with retries and metrics, versioned prompts, JSON Schema validation,
+the grounding validator), `assessment-service` (deterministic JD-fit scoring over the
+optimization) and `application-service` (the `Application` aggregate plus grounded email
+generation — [ADR-019](docs/ARCHITECTURE_DECISIONS.md#adr-019)) are all real.
 
-Email generation (subject + body, grounded — [ADR-019](docs/ARCHITECTURE_DECISIONS.md#adr-019))
-and cover-letter generation (grounded, evidence-selected against the job's actual
-requirements — [ADR-020](docs/ARCHITECTURE_DECISIONS.md#adr-020)) are also real, both via
-`application-service`'s central `Application` aggregate. Not yet implemented: a frontend
-"Sign in with Google" entry point (the backend flow is done, see above), JD file (PDF/DOCX)
-intake, custom-upload/online templates, combined (`ALL`) generation, Gmail drafts, and DOCX
-rendering. See
-[`docs/API_CATALOG.md`](docs/API_CATALOG.md) for exactly what's implemented versus planned, and
-[`docs/API_INTEGRATION.md`](docs/API_INTEGRATION.md) for how the frontend calls it.
-
-`notification-service` remains a wired skeleton: it builds, registers, loads configuration
-and reports health, but contains no domain logic yet.
+"Sign in with Google" entry point, JD file (PDF/DOCX) intake, Gmail drafts, and a
+JD-optimization history/list view.
 
 Progress and exit criteria: [`docs/IMPLEMENTATION_PLAN.md`](docs/IMPLEMENTATION_PLAN.md).
 
@@ -71,15 +51,13 @@ Progress and exit criteria: [`docs/IMPLEMENTATION_PLAN.md`](docs/IMPLEMENTATION_
 | Area | What it does |
 |---|---|
 | Profile | Personal info, education, experience, skills, certifications, projects — each item carrying a stable evidence ID |
-| JD intake | Paste text, upload a PDF/DOCX, or supply a URL fetched through an SSRF-hardened client |
+| JD intake | Paste text or supply a URL fetched through an SSRF-hardened client |
 | JD confirmation | The user must confirm the extracted JD before anything is generated |
 | JD analysis | Requirements extracted and classified: hard-required, preferred, responsibility, skill, technology, education, certification |
-| Grounded generation | Two-stage Groq pipeline — evidence selection, then content — validated against a JSON schema and a grounding check |
-| Documents | Three ATS-safe, single-column templates rendered deterministically to PDF (DOCX planned) |
-| ATS score | Ten weighted checks computed in Java, never asked of the LLM, explainable down to the sub-check |
+| JD optimization | One Groq call producing keywords, per-requirement verdicts, gaps and emphasis — schema-validated, then filtered so every citation resolves to real profile evidence |
 | JD compatibility | Coverage, keyword match, seniority alignment and recency, traceable to requirement and evidence |
 | Screening readiness | `STRONG` · `COMPETITIVE` · `STRETCH` · `WEAK FIT`, with the reason shown |
-| Applications | Grounded application email and cover letter generation; generation history and lifecycle status tracked per application; Gmail **draft** (never auto-sent) planned |
+| Applications | Grounded application email generation; lifecycle status tracked per application; Gmail **draft** (never auto-sent) planned |
 
 ---
 
@@ -92,19 +70,18 @@ React 19 + TypeScript + Vite + Tailwind + GSAP
         Spring Cloud Gateway :8080
    JWT verification · rate limiting · CORS · correlation IDs
                     │  (internal network only)
-   ┌──────┬─────────┼─────────┬──────────┬───────────┐
-   ▼      ▼         ▼         ▼          ▼           ▼
- Auth  Profile     JD      Resume   Assessment   Document
- 8081    8082     8083      8084       8086        8087
-                    │         │                      │
-                    └────┬────┘                      ▼
-                         ▼                      MinIO / S3
-                   AI Service 8085              private bucket
+   ┌──────┬─────────┼──────────────┐
+   ▼      ▼         ▼              ▼
+ Auth  Profile     JD         Assessment
+ 8081    8082     8083           8086
+                    │
+                    ▼
+              AI Service 8085
                          │
                          ▼
-                     Groq API
+              Groq (the only AI provider)
 
- Application 8088 → Gmail        Notification 8089 → SMTP
+ Application 8088 → Gmail
  Redis 6379 · MongoDB Atlas · Config 8888 · Eureka 8761
  Prometheus 9090 · Grafana 3001 · OTel Collector 4317
 ```
@@ -125,10 +102,8 @@ Zustand · React Hook Form · Zod · React Router · PDF.js
 
 **Data** — MongoDB Atlas (Spring Data MongoDB; no JPA, Hibernate, Flyway or MySQL) · Redis
 
-**AI** — Groq, structured JSON output, JSON Schema validation, versioned prompts,
-grounding validation
-
-**Documents** — OpenHTMLToPDF (PDF) · docx4j (DOCX) · versioned HTML/CSS templates
+**AI** — Groq only: JD analysis, evidence selection, JD optimization and email content —
+structured JSON output, JSON Schema validation, versioned prompts, grounding validation
 
 **Infrastructure** — Docker · Docker Compose · GitHub Actions · Prometheus · Grafana ·
 OpenTelemetry · Trivy · Semgrep · Gitleaks
@@ -193,13 +168,11 @@ Setup instructions for every credential: [`docs/EXTERNAL_APIS.md`](docs/EXTERNAL
 | Group | Variables | Consumer |
 |---|---|---|
 | MongoDB Atlas | `MONGODB_URI`, `MONGODB_DB_*` | data-owning services |
-| Redis | `REDIS_HOST`, `REDIS_PORT`, `REDIS_PASSWORD` | gateway, auth, jd, resume, ai, document, notification |
+| Redis | `REDIS_HOST`, `REDIS_PORT`, `REDIS_PASSWORD` | gateway, auth, jd, resume, ai, document |
 | JWT | `JWT_SECRET`, `JWT_ISSUER`, `JWT_*_EXPIRATION` | auth-service (signs), gateway (verifies) |
 | Google OAuth | `GOOGLE_CLIENT_ID/SECRET/REDIRECT_URI` | auth-service only |
 | Groq | `GROQ_API_KEY`, `GROQ_MODEL`, … | **ai-service only** |
-| Storage | `S3_*`, `MINIO_ROOT_*` | document-service |
 | Gmail | `GMAIL_*` | application-service |
-| SMTP | `SMTP_*` | notification-service |
 | Frontend | `VITE_API_BASE_URL` | frontend — **public, never a secret** |
 
 Anything prefixed `VITE_` is compiled into the browser bundle and is therefore public.
@@ -299,14 +272,10 @@ exactly as they do in Docker.
 | auth-service | 8081 | ❌ | Accounts, JWT, OAuth |
 | profile-service | 8082 | ❌ | Profile and evidence inventory |
 | jd-service | 8083 | ❌ | JD ingestion and analysis |
-| resume-service | 8084 | ❌ | Generation orchestration, versions |
 | ai-service | 8085 | ❌ | Groq boundary (no gateway route) |
 | assessment-service | 8086 | ❌ | ATS and JD compatibility |
-| document-service | 8087 | ❌ | PDF rendering, storage (DOCX planned) |
 | application-service | 8088 | ❌ | Central Application aggregate, history, status, email + cover-letter generation (Gmail drafts pending) |
-| notification-service | 8089 | ❌ | Transactional email |
 | redis | 6379 | ✅ (dev) | Cache, rate limits, job streams |
-| minio | 9000 / 9001 | ✅ (dev) | Object storage + console |
 | prometheus | 9090 | ✅ (dev) | Metrics |
 | grafana | 3001 | ✅ (dev) | Dashboards |
 | otel-collector | 4317 / 4318 | ✅ (dev) | Traces and metrics |
@@ -318,10 +287,10 @@ gateway ([ADR-007](docs/ARCHITECTURE_DECISIONS.md#adr-007)).
 
 ## Trying the AI service
 
-`ai-service` needs `GROQ_API_KEY` in `.env` (free key from <https://console.groq.com>).
-It is internal-only by design (ADR-012), so call it directly on port 8085 — not through
-the gateway.
-
+`ai-service` needs `GROQ_API_KEY` in `.env` (free key from <https://console.groq.com>) —
+mandatory, `ai-service` will not start without it; it is the sole provider for JD analysis,
+evidence selection, resume, cover-letter and email content. `GEMINI_API_KEY` (free key from
+<https://aistudio.google.com>) is optional and unrelated to any of that — it backs only
 ```powershell
 .\scripts\run-local.ps1 -Services config-server,discovery-server,ai-service
 
@@ -367,11 +336,10 @@ Models, indexes, retention and backup policy: [`docs/DATABASE.md`](docs/DATABASE
 
 ## External API setup
 
-Groq, Google OAuth, MongoDB Atlas, MinIO/S3, Gmail and SMTP each have setup steps,
-required scopes, rate limits and security notes in
-[`docs/EXTERNAL_APIS.md`](docs/EXTERNAL_APIS.md).
+Groq, Google OAuth, MongoDB Atlas and Gmail each have setup steps, required scopes, rate
+limits and security notes in [`docs/EXTERNAL_APIS.md`](docs/EXTERNAL_APIS.md).
 
-Two rules that are never relaxed:
+Rules that are never relaxed:
 
 - `GROQ_API_KEY` exists in `ai-service` and nowhere else.
 - `GOOGLE_CLIENT_SECRET` never reaches React. OAuth runs entirely server-side.

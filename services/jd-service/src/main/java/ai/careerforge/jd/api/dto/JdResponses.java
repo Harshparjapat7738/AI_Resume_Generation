@@ -32,6 +32,20 @@ public final class JdResponses {
             List<String> keywords, List<RequirementResponse> requirements) {
     }
 
+    /**
+     * The JD-optimization result (ADR-033) — the product's primary deliverable. {@code
+     * optimisation} is ai-service's already-validated JSON, republished verbatim; {@code
+     * citedEvidenceIds} is the provenance trail proving every candidate-facing value traces back
+     * to the caller's own profile. Never the Mongo entity.
+     */
+    public record JdOptimizationResponse(
+            String id,
+            String jobDescriptionId,
+            java.util.Map<String, Object> optimisation,
+            java.util.List<String> citedEvidenceIds,
+            java.time.Instant createdAt) {
+    }
+
     public record PageResponse<T>(List<T> content, int page, int size, long totalElements, int totalPages) {
     }
 }

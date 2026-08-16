@@ -11,10 +11,10 @@ public final class AiResponses {
 
     /**
      * Every AI response carries its provenance so the calling service can persist it on the
-     * artifact. Without model id and prompt version, a generated resume cannot be
-     * reproduced or explained later.
+     * artifact. Without model id and prompt version, a generated result cannot be reproduced
+     * or explained later.
      *
-     * @param promptVersion e.g. {@code resume-content@v1}
+     * @param promptVersion e.g. {@code jd-optimization@v1}
      * @param model         the model that actually served the request
      * @param totalTokens   for cost attribution
      * @param regenerated   true when the first attempt failed validation and was retried
@@ -30,31 +30,19 @@ public final class AiResponses {
     }
 
     /**
-     * @param content         validated resume content
-     * @param grounding       the full verification report, stored with the resume version
-     * @param removedSections statements dropped because they failed grounding twice; the
-     *                        caller surfaces these to the user as unmet requirements
+     * The JD-optimization result (ADR-033): keywords, per-requirement verdicts, missing
+     * requirements and emphasis ordering. No prose — see {@code JdOptimizationService}.
+     *
+     * <p>Carries no {@code GroundingReport}, deliberately: grounding validates generated
+     * sentences against evidence, and this operation generates no sentences. Its equivalent
+     * guarantee is structural — every candidate-facing value is an {@code evidenceId} the
+     * service has already verified against the supplied inventory.
      */
-    public record ResumeContentResponse(JsonNode content, GroundingReport grounding,
-                                        java.util.List<String> removedSections,
-                                        Provenance provenance) {
+    public record JdOptimizationResponse(JsonNode optimisation, Provenance provenance) {
     }
 
     /**
-     * @param content            validated cover-letter content
-     * @param grounding          the full verification report, stored with the version
-     * @param removedParagraphs  paragraphs dropped because they failed grounding twice; the
-     *                           caller surfaces the letter with those simply absent
-     */
-    public record CoverLetterContentResponse(JsonNode content, GroundingReport grounding,
-                                             java.util.List<String> removedParagraphs,
-                                             Provenance provenance) {
-    }
-
-    /**
-     * @param content           validated email content (greeting, one body paragraph, one
-     *                          closing paragraph, sign-off) — application-service assembles
-     *                          the final subject and body around this; see
+     * @param content           the grounded highlight paragraph(s), see
      *                          ARCHITECTURE_DECISIONS.md ADR-019
      * @param grounding         the full verification report, stored with the email version
      * @param removedParagraphs paragraphs dropped because they failed grounding twice

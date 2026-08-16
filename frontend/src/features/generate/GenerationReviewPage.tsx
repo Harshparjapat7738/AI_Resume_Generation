@@ -1,21 +1,19 @@
-import { useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import { Button } from '@/components/ui/Button';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { FullScreenSpinner } from '@/components/ui/FullScreenSpinner';
+import { showToast } from '@/components/ui/toast';
 import { DashboardSidebar } from '@/features/dashboard/components/DashboardSidebar';
-import type { GenerationType } from '@/services/applicationApi';
-import { confirmJd, getAnalysis, getJd } from '@/services/jdApi';
+import { confirmJd, editJd, getAnalysis, getJd } from '@/services/jdApi';
 import * as profileApi from '@/services/profileApi';
 import { useSession } from '@/services/session';
-import { ApplicationPackagePanel } from './components/ApplicationPackagePanel';
+import { ConfirmAnalysisModal } from './components/ConfirmAnalysisModal';
 import { GenerationCta } from './components/GenerationCta';
-import { GenerationProgress } from './components/GenerationProgress';
+import { GenerationProgress, stepsForGenerationType } from './components/GenerationProgress';
 import { JobDescriptionPanel } from './components/JobDescriptionPanel';
-import { RequirementsPanel } from './components/RequirementsPanel';
 import { ReviewHeader } from './components/ReviewHeader';
-import { SkillsAlignmentPanel } from './components/SkillsAlignmentPanel';
+import { UnsavedChangesDialog } from './components/UnsavedChangesDialog';
 import { computeSkillsAlignment } from './utils/skillsAlignment';
 
 interface ReviewCopy {
@@ -27,13 +25,21 @@ interface ReviewCopy {
 }
 
 // RESUME_ONLY / ALL still pick a template on its own dedicated step (`TemplatePage`, via
-// `/generate/template/:jdId`) rather than inline here — resume-service's template catalogue,
+// its own step) rather than inline here — resume-service's template catalogue,
 // custom-upload wizard and field-mapping editor are a whole self-contained surface, and this
 // keeps that one real, already-battle-tested picker instead of a second copy of it. This page's
 // own CTA for those two types is "Choose a template", which hands off to it with the JD and
 // generation type already carried along; the *next* page's own CTA is what actually calls
 // generation ("Generate my resume" / "Generate everything").
-const COPY: Record<GenerationType, ReviewCopy> = {
+const COPY: Record<string, ReviewCopy> = {
+  JD_OPTIMIZATION: {
+    pageTitle: 'Confirm and review',
+    subtitle: 'Review your job match before generating your JD optimization.',
+    ctaHeading: 'Ready to generate your JD optimization?',
+    ctaDescription:
+      "Once you confirm, we'll match your verified profile against this job description and give you the keywords, matches and gaps to build your documents with.",
+    ctaLabel: 'Generate JD Optimization',
+  },
   RESUME_ONLY: {
     pageTitle: 'Confirm and review',
     subtitle: 'Review your job match before generating your resume.',
@@ -79,14 +85,8 @@ export function GenerationReviewPage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [searchParams] = useSearchParams();
-  const generationType = (searchParams.get('type') as GenerationType | null) ?? 'RESUME_ONLY';
-  // Only relevant for RESUME_ONLY/ALL — set when arriving from the Templates page's "Use this
-  // template" action, so TemplatePage (the next step) can preselect it instead of the user
-  // having to pick it again. This page has no template UI of its own to preselect into.
-  const preselectedTemplateId = searchParams.get('templateId');
-  const templateParam = preselectedTemplateId ? `&templateId=${preselectedTemplateId}` : '';
-  const needsTemplate = generationType === 'RESUME_ONLY' || generationType === 'ALL';
-  const copy = COPY[generationType] ?? COPY.RESUME_ONLY;
+  const generationType = searchParams.get('type') ?? 'JD_OPTIMIZATION';
+  const copy: ReviewCopy = COPY[generationType] ?? COPY.JD_OPTIMIZATION!;
 
   const { data: user } = useSession();
 
@@ -102,6 +102,74 @@ export function GenerationReviewPage() {
   });
 
   const isConfirmed = jdQuery.data?.status === 'CONFIRMED';
+
+  // --- Edit JD (redesign brief) --------------------------------------------------------------
+  const [isEditingJd, setIsEditingJd] = useState(false);
+  const [jdDraft, setJdDraft] = useState('');
+  const [showUnsavedDialog, setShowUnsavedDialog] = useState(false);
+  const [pendingLeaveAction, setPendingLeaveAction] = useState<(() => void) | null>(null);
+
+  const hasUnsavedJdChanges = isEditingJd && jdDraft !== (jdQuery.data?.rawText ?? '');
+
+  const editJdMutation = useMutation({
+    mutationFn: (text: string) => editJd(jdId, text),
+    onSuccess: (updated) => {
+      queryClient.setQueryData(['jd', jdId], updated);
+      setIsEditingJd(false);
+      showToast('Job description updated.');
+    },
+  });
+
+  const startEdit = () => {
+    setJdDraft(jdQuery.data?.rawText ?? '');
+    setIsEditingJd(true);
+  };
+
+  // Runs `action` immediately unless there's an unsaved JD edit in flight, in which case it's
+  // deferred until the Unsaved Changes dialog resolves — the same guard behind Back, Save draft,
+  // Cancel and Confirm alike (redesign brief: "if... user tries to leave/cancel/confirm").
+  const requestLeave = (action: () => void) => {
+    if (hasUnsavedJdChanges) {
+      setPendingLeaveAction(() => action);
+      setShowUnsavedDialog(true);
+      return;
+    }
+    action();
+  };
+
+  const handleCancelEdit = () => requestLeave(() => setIsEditingJd(false));
+
+  const closeUnsavedDialog = () => {
+    setShowUnsavedDialog(false);
+    setPendingLeaveAction(null);
+  };
+
+  const discardAndContinue = () => {
+    setIsEditingJd(false);
+    closeUnsavedDialog();
+    pendingLeaveAction?.();
+  };
+
+  const saveAndContinue = () => {
+    editJdMutation.mutate(jdDraft, {
+      onSuccess: () => {
+        closeUnsavedDialog();
+        pendingLeaveAction?.();
+      },
+    });
+  };
+
+  // A native "are you sure you want to leave?" prompt for a browser-level navigation (refresh,
+  // tab close, typed URL) — the in-app dialog above only intercepts Back/Save draft/Confirm.
+  useEffect(() => {
+    if (!hasUnsavedJdChanges) return;
+    const onBeforeUnload = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = '';
+    };
+    window.addEventListener('beforeunload', onBeforeUnload);
+    return () => window.removeEventListener('beforeunload', onBeforeUnload);
+  }, [hasUnsavedJdChanges]);
 
   const analysisQuery = useQuery({
     queryKey: ['jd-analysis', jdId],
@@ -125,13 +193,31 @@ export function GenerationReviewPage() {
 
   const canGenerate = isConfirmed && Boolean(analysisQuery.data);
 
-  const handlePrimaryAction = () => {
-    if (needsTemplate) {
-      navigate(`/generate/template/${jdId}?type=${generationType}${templateParam}`);
-      return;
-    }
-    navigate(`/generate/processing/${jdId}?type=${generationType}`);
-  };
+  // --- Post-confirm skill-gap popup ----------------------------------------------------------
+  // Opened only by a fresh Confirm click (below) — never on a reload of an already-confirmed
+  // JD, so a returning user isn't re-prompted every time they revisit this page. The full
+  // requirements/skills-alignment breakdown still renders on the page underneath regardless;
+  // this is a faster first look, not a replacement for it.
+  const [showAnalysisModal, setShowAnalysisModal] = useState(false);
+  const missingAlignmentItems = useMemo(
+    () => alignment.filter((item) => item.status === 'MISSING' && item.keyword),
+    [alignment],
+  );
+
+  // If analysis itself fails, there's nothing to show in the popup — close it and let the
+  // existing inline error banner (below) carry the failure instead of stacking a second one.
+  useEffect(() => {
+    if (analysisQuery.isError) setShowAnalysisModal(false);
+  }, [analysisQuery.isError]);
+
+  // Straight to processing: neither remaining flow (JD optimization, email) picks a template,
+  // so the template step that used to sit between here and there is gone (ADR-033).
+  const handlePrimaryAction = () => navigate(`/generate/processing/${jdId}?type=${generationType}`);
+
+  const handleBack = () => requestLeave(() => navigate(`/generate/job?type=${generationType}`));
+  const handleSaveDraft = () => requestLeave(() => navigate('/dashboard'));
+  const handleConfirmClick = () =>
+    requestLeave(() => confirmMutation.mutate(undefined, { onSuccess: () => setShowAnalysisModal(true) }));
 
   if (!user || jdQuery.isLoading) {
     return <FullScreenSpinner label="Loading the job description…" />;
@@ -144,11 +230,11 @@ export function GenerationReviewPage() {
       <DashboardSidebar userName={displayName} userEmail={user.email} />
 
       <div className="flex min-w-0 flex-1 flex-col">
-        <ReviewHeader title="Generate application" backTo={`/generate/job?type=${generationType}`} />
+        <ReviewHeader title="Generate application" onBack={handleBack} onSaveDraft={handleSaveDraft} />
 
         <main className="min-w-0 flex-1 px-5 py-7 pl-16 sm:px-7 lg:px-10 lg:py-9 lg:pl-10">
           <div className="mx-auto max-w-[1680px]">
-            <GenerationProgress activeStep={2} />
+            <GenerationProgress activeStep={2} steps={stepsForGenerationType(generationType)} />
 
             <h1 className="mt-6 text-2xl font-semibold tracking-tight text-ink sm:text-[28px]">{copy.pageTitle}</h1>
             <p className="mt-1.5 text-sm text-ink-muted">{copy.subtitle}</p>
@@ -159,45 +245,36 @@ export function GenerationReviewPage() {
               </div>
             ) : (
               <div className="mt-8 space-y-6">
-                <div className="grid gap-6 lg:grid-cols-2">
-                  <JobDescriptionPanel jd={jdQuery.data} />
+                <JobDescriptionPanel
+                  jd={jdQuery.data}
+                  editable={!isConfirmed}
+                  isEditing={isEditingJd}
+                  draftText={jdDraft}
+                  onDraftChange={setJdDraft}
+                  onStartEdit={startEdit}
+                  onCancelEdit={handleCancelEdit}
+                  onSave={() => editJdMutation.mutate(jdDraft)}
+                  saving={editJdMutation.isPending}
+                  saveError={editJdMutation.error}
+                  isConfirmed={isConfirmed}
+                  onConfirm={handleConfirmClick}
+                  confirming={confirmMutation.isPending}
+                  confirmError={confirmMutation.isError ? confirmMutation.error : null}
+                />
 
-                  {!isConfirmed ? (
-                    <div className="flex flex-col items-start justify-center gap-4 rounded-2xl border border-dashed border-border-strong bg-surface/60 p-6 sm:p-8">
-                      <div>
-                        <h2 className="text-base font-semibold text-ink">Confirm this is the right job</h2>
-                        <p className="mt-1.5 text-sm text-ink-muted">
-                          Nothing is generated until you confirm this is the job you're applying to — once confirmed,
-                          we'll extract its requirements and grade them against your profile.
-                        </p>
-                      </div>
-                      {confirmMutation.isError && <ErrorBanner error={confirmMutation.error} />}
-                      <Button onClick={() => confirmMutation.mutate()} loading={confirmMutation.isPending}>
-                        Confirm this is correct
-                      </Button>
-                    </div>
-                  ) : analysisQuery.isLoading ? (
-                    <div className="flex flex-col items-center justify-center gap-3 rounded-2xl border border-border bg-surface p-8 text-center text-sm text-ink-muted">
-                      <span
-                        className="h-5 w-5 animate-spin rounded-full border-2 border-current border-t-transparent"
-                        aria-hidden="true"
-                      />
-                      Analysing requirements against the job description…
-                    </div>
-                  ) : analysisQuery.isError ? (
-                    <div className="rounded-2xl border border-border bg-surface p-6 sm:p-8">
-                      <ErrorBanner error={analysisQuery.error} />
-                    </div>
-                  ) : analysisQuery.data ? (
-                    <RequirementsPanel analysis={analysisQuery.data} />
-                  ) : null}
-                </div>
+                {/* The full requirements/skills-alignment breakdown intentionally isn't
+                    rendered here anymore — ConfirmAnalysisModal (below) is the whole "what did
+                    analysis find" moment now. Analysis loading has its own state in that modal
+                    too, so there's nothing to show inline while it's in flight; only a real
+                    failure (which closes the modal) needs an inline home. */}
+                {isConfirmed && analysisQuery.isError && (
+                  <div className="rounded-2xl border border-border bg-surface p-6 sm:p-8">
+                    <ErrorBanner error={analysisQuery.error} />
+                  </div>
+                )}
 
                 {isConfirmed && analysisQuery.data && (
                   <>
-                    <SkillsAlignmentPanel items={alignment} profile={profileQuery.data} />
-
-                    {generationType === 'ALL' && <ApplicationPackagePanel />}
 
                     <GenerationCta
                       heading={copy.ctaHeading}
@@ -213,6 +290,24 @@ export function GenerationReviewPage() {
           </div>
         </main>
       </div>
+
+      {showUnsavedDialog && (
+        <UnsavedChangesDialog
+          onContinueEditing={closeUnsavedDialog}
+          onDiscard={discardAndContinue}
+          onSave={saveAndContinue}
+          saving={editJdMutation.isPending}
+          error={editJdMutation.isError ? editJdMutation.error : null}
+        />
+      )}
+
+      {showAnalysisModal && (analysisQuery.isLoading || analysisQuery.data) && (
+        <ConfirmAnalysisModal
+          status={analysisQuery.isLoading ? 'loading' : 'ready'}
+          missingItems={missingAlignmentItems}
+          onContinue={() => setShowAnalysisModal(false)}
+        />
+      )}
     </div>
   );
 }

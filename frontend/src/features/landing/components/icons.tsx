@@ -141,3 +141,85 @@ export function DatabaseIcon({ className }: IconProps) {
     </svg>
   );
 }
+
+export function PlayIcon({ className }: IconProps) {
+  return (
+    <svg {...base} className={className}>
+      <circle cx="12" cy="12" r="9" />
+      <path d="M10 8.5l6 3.5-6 3.5v-7Z" fill="currentColor" stroke="none" />
+    </svg>
+  );
+}
+
+export function UploadIcon({ className }: IconProps) {
+  return (
+    <svg {...base} className={className}>
+      <path d="M12 15.5V4.5M8 8.5l4-4 4 4" />
+      <path d="M4.75 15.5v3a1.5 1.5 0 0 0 1.5 1.5h11.5a1.5 1.5 0 0 0 1.5-1.5v-3" />
+    </svg>
+  );
+}
+
+export function SearchIcon({ className }: IconProps) {
+  return (
+    <svg {...base} className={className}>
+      <circle cx="10.75" cy="10.75" r="6.25" />
+      <path d="M19.25 19.25l-4.3-4.3" />
+    </svg>
+  );
+}
+
+export function ChecklistIcon({ className }: IconProps) {
+  return (
+    <svg {...base} className={className}>
+      <path d="M4.75 6.5l1.5 1.5 2.5-2.5M4.75 13l1.5 1.5 2.5-2.5M4.75 19.5l1.5 1.5 2.5-2.5" />
+      <path d="M12 6.5h7.25M12 13h7.25M12 19.5h7.25" />
+    </svg>
+  );
+}
+
+export function TrophyIcon({ className }: IconProps) {
+  return (
+    <svg {...base} className={className}>
+      <path d="M7 4.75h10v4.5a5 5 0 0 1-10 0v-4.5Z" />
+      <path d="M7 6h-1.75a2 2 0 0 0 0 4H7M17 6h1.75a2 2 0 0 1 0 4H17" />
+      <path d="M12 14.25v3M9 20.25h6M9.75 20.25v-1.5a1 1 0 0 1 1-1h2.5a1 1 0 0 1 1 1v1.5" />
+    </svg>
+  );
+}
+
+export function QuoteIcon({ className }: IconProps) {
+  return (
+    <svg {...base} className={className} fill="currentColor" stroke="none">
+      <path d="M9.5 6.5c-3 1-4.5 3.4-4.5 6.3 0 2.6 1.7 4.4 3.9 4.4a3.3 3.3 0 0 0 3.4-3.3c0-1.7-1.1-2.9-2.7-3.1.2-1.4 1.2-2.6 2.7-3.2L9.5 6.5Zm9 0c-3 1-4.5 3.4-4.5 6.3 0 2.6 1.7 4.4 3.9 4.4a3.3 3.3 0 0 0 3.4-3.3c0-1.7-1.1-2.9-2.7-3.1.2-1.4 1.2-2.6 2.7-3.2l-2.8-1.1Z" />
+    </svg>
+  );
+}
+
+export function LayersIcon({ className }: IconProps) {
+  return (
+    <svg {...base} className={className}>
+      <path d="M12 3.75 3.75 8.5 12 13.25 20.25 8.5 12 3.75Z" />
+      <path d="M3.75 12.5 12 17.25l8.25-4.75M3.75 16.5 12 21.25l8.25-4.75" />
+    </svg>
+  );
+}
+
+export function TargetIcon({ className }: IconProps) {
+  return (
+    <svg {...base} className={className}>
+      <circle cx="12" cy="12" r="8" />
+      <circle cx="12" cy="12" r="4.25" />
+      <circle cx="12" cy="12" r="0.75" fill="currentColor" stroke="none" />
+    </svg>
+  );
+}
+
+export function TrendUpIcon({ className }: IconProps) {
+  return (
+    <svg {...base} className={className}>
+      <path d="M4.5 16.5 10 11l3.5 3.5 6-6.5" />
+      <path d="M15.75 8h3.75v3.75" />
+    </svg>
+  );
+}

@@ -8,8 +8,10 @@ import org.springframework.data.mongodb.core.mapping.Document;
 import org.springframework.data.mongodb.core.mapping.Field;
 
 /**
- * docs/DATABASE.md &sect;3, keyed by {@code resumeVersionId} alone rather than
- * {@code resumeVersionId + jdVersionId} — resume-service doesn't track a jdVersionId today
+ * docs/DATABASE.md &sect;3, keyed by {@code jdOptimizationId} (ADR-033): the score describes a
+ * specific JD-optimization result, and jd-service already keeps exactly one current optimization
+ * per JD version, so that id is the natural key. It replaced {@code resumeVersionId}, which
+ * became meaningless once CareerForge stopped generating resumes
  * (see ADR-014), and a resume version is generated against exactly one JD, so this is
  * equivalent in practice. {@code recommendations} is embedded here rather than a separate
  * collection: it's bounded and always read together with the fit score, which is exactly
@@ -21,8 +23,8 @@ public class JdFitAssessment {
     @Id
     private String id;
 
-    @Field("resumeVersionId")
-    private String resumeVersionId;
+    @Field("jdOptimizationId")
+    private String jdOptimizationId;
 
     @Field("userId")
     private String userId;
@@ -74,7 +76,7 @@ public class JdFitAssessment {
         // Spring Data
     }
 
-    public JdFitAssessment(String resumeVersionId, String userId, String jobDescriptionId,
+    public JdFitAssessment(String jdOptimizationId, String userId, String jobDescriptionId,
                            double compatibilityScore, double coverage, double keywordMatch,
                            double seniorityMatch, double recency,
                            List<RequirementMatchResult> requirementMatches,
@@ -82,7 +84,7 @@ public class JdFitAssessment {
                            List<String> matchedKeywords, List<String> missingKeywords,
                            String readinessBand, String bandRule,
                            List<RecommendationItem> recommendations) {
-        this.resumeVersionId = resumeVersionId;
+        this.jdOptimizationId = jdOptimizationId;
         this.userId = userId;
         this.jobDescriptionId = jobDescriptionId;
         this.compatibilityScore = compatibilityScore;
@@ -103,8 +105,12 @@ public class JdFitAssessment {
         return id;
     }
 
-    public String resumeVersionId() {
-        return resumeVersionId;
+    public String jobDescriptionId() {
+        return jobDescriptionId;
+    }
+
+    public String jdOptimizationId() {
+        return jdOptimizationId;
     }
 
     public double compatibilityScore() {

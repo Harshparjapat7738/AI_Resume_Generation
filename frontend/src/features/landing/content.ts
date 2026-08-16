@@ -11,33 +11,30 @@ export interface WorkflowStep {
   description: string;
 }
 
-export const workflowSteps: WorkflowStep[] = [
+/** The four-stage visual journey (redesign brief §3, "How It Works"). Compresses the
+ *  product's real five stages (see `docs/CODEBASE.md` §3) by folding scoring into the
+ *  generation step — still every real stage, just grouped for a four-card layout. */
+export const howItWorks: WorkflowStep[] = [
   {
     index: '01',
-    title: 'Build a verified profile',
+    title: 'Build your profile',
     description:
-      'Personal info, education, experience, skills, certifications and projects — each fact carries a stable evidence ID the rest of the pipeline can point back to.',
+      'Add your real experience, education, skills and projects — each fact gets a stable evidence ID the rest of the pipeline can point back to.',
   },
   {
     index: '02',
     title: 'Add a job description',
     description:
-      'Paste text, upload a PDF or DOCX, or supply a URL fetched through an SSRF-hardened client. You confirm the extracted JD before anything is generated.',
+      'Paste text, upload a PDF/DOCX, or supply a URL. You confirm the extracted JD and see it analysed before anything is generated.',
   },
   {
     index: '03',
-    title: 'Generate, grounded',
+    title: 'Generate & score',
     description:
-      'A two-stage pipeline selects evidence, then writes content — validated against a JSON schema and a grounding check before it ever reaches you.',
+      'A two-stage pipeline writes grounded content, then a deterministic ATS and JD-fit score explains exactly what matches.',
   },
   {
     index: '04',
-    title: 'See your ATS score',
-    description:
-      'Ten weighted checks, computed in Java and never asked of the LLM, explainable all the way down to the sub-check.',
-  },
-  {
-    index: '05',
     title: 'Apply with confidence',
     description:
       'A tailored resume, cover letter and email — plus a Gmail draft you review yourself. Nothing is ever sent on your behalf.',
@@ -49,13 +46,28 @@ export interface AtsCheck {
   score: number;
 }
 
+/** The seven real, deterministic checks `assessment-service`'s `AtsScoringEngine` runs
+ *  in Java against structured resume content — never asked of the LLM (ADR-014). Scores
+ *  shown are one illustrative example, not a live/aggregate figure. */
 export const atsChecks: AtsCheck[] = [
+  { label: 'Contact & parse safety', score: 100 },
+  { label: 'Professional summary', score: 90 },
+  { label: 'Experience section', score: 95 },
+  { label: 'Date consistency', score: 100 },
+  { label: 'Bullet clarity', score: 82 },
+  { label: 'Keyword match', score: 87 },
+  { label: 'Grounding integrity', score: 100 },
+];
+
+/** The JD-fit dimensions `assessment-service`'s `JdFitScoringEngine` weights (coverage
+ *  0.50, keyword 0.20, seniority 0.20, recency 0.10 — see `docs/CODEBASE.md` §2
+ *  assessment-service) — a separate real score from the ATS checks above, shown together
+ *  in the hero mockup the way the product's own result page shows both side by side. */
+export const jdFitChecks: AtsCheck[] = [
   { label: 'Requirement coverage', score: 92 },
   { label: 'Keyword match', score: 87 },
   { label: 'Seniority alignment', score: 95 },
-  { label: 'Section structure', score: 100 },
   { label: 'Recency', score: 78 },
-  { label: 'Contact & parse safety', score: 100 },
 ];
 
 export interface Benefit {
@@ -170,4 +182,75 @@ export const faqItems: FaqItem[] = [
     answer:
       "It's reported as a gap in the JD compatibility view, not quietly invented to close the score.",
   },
+];
+
+/** "Prepare better" section (redesign brief §5) — short, real reasons, not a testimonial.
+ *  There is no fabricated review here on purpose: the product doesn't get to invent a
+ *  user's experience, and this page doesn't get to invent one either. */
+export const prepareBullets: string[] = [
+  'Tailored to your real, verified experience',
+  'Every generated line traces to an evidence ID',
+  'Built to parse cleanly, not just look good',
+];
+
+export interface Stat {
+  value: number;
+  suffix?: string;
+  label: string;
+}
+
+/** "By the numbers" (redesign brief §6) — four real, verifiable facts about the system
+ *  itself, not usage/social-proof metrics the product has no real numbers for yet (see
+ *  README "Status": a first vertical slice, not a launched product with a user base).
+ *  Sources: AtsScoringEngine (7 checks), Profile (6 evidence sections),
+ *  jd-analysis.schema.json (7 requirement categories), GenerationType (4 ways to apply). */
+export const stats: Stat[] = [
+  { value: 7, label: 'Deterministic ATS checks, computed in Java' },
+  { value: 6, label: 'Evidence-bearing profile sections' },
+  { value: 7, label: 'JD requirement categories, each weighted' },
+  { value: 4, label: 'Ways to apply — resume, cover letter, email, or all three' },
+];
+
+export interface ResourceTeaser {
+  category: string;
+  title: string;
+  description: string;
+}
+
+/** "Guides and tips" (redesign brief §8) — the product has no blog yet, so these are
+ *  short, real answers rather than links to articles that don't exist; each "Read more"
+ *  points at the FAQ section below, which carries the full answer. */
+export const resourceTeasers: ResourceTeaser[] = [
+  {
+    category: 'Grounding',
+    title: "Will it invent experience I don't have?",
+    description: "No — every statement traces to an evidence ID, or it's removed and reported as a gap.",
+  },
+  {
+    category: 'Scoring',
+    title: 'How is the ATS score actually computed?',
+    description: 'Seven weighted checks running in Java — deterministic, and explainable down to the sub-check.',
+  },
+  {
+    category: 'Privacy',
+    title: 'Where does my data live?',
+    description: 'MongoDB Atlas and a private object store. Another user requesting your resume gets a 404.',
+  },
+  {
+    category: 'Applications',
+    title: 'Will anything be sent without me seeing it?',
+    description: 'Never. Gmail integration only ever creates a draft — sending is always your own action.',
+  },
+];
+
+export interface UnderstandStep {
+  title: string;
+  description: string;
+}
+
+/** "Everything starts with understanding your profile" (redesign brief §9). */
+export const understandSteps: UnderstandStep[] = [
+  { title: 'Understand your experience', description: 'Real roles, projects and skills, each with a stable evidence ID.' },
+  { title: 'Match it with the role', description: "The JD's own requirements, extracted and classified — not guessed." },
+  { title: 'Build a grounded application', description: 'Tailored content that only ever cites what you actually gave it.' },
 ];

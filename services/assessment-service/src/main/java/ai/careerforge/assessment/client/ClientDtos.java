@@ -26,13 +26,6 @@ public final class ClientDtos {
     public record GapDto(String requirementId, String text, String type) {
     }
 
-    @JsonIgnoreProperties(ignoreUnknown = true)
-    public record ResumeVersionDto(
-            String id, String jobDescriptionId, String jobTitle, String company,
-            Map<String, Object> content, List<Map<String, Object>> evidenceMatches,
-            List<GapDto> gaps, Map<String, Object> grounding, List<String> removedSections,
-            Instant createdAt) {
-    }
 
     // ---- jd-service -----------------------------------------------------------
 
@@ -44,6 +37,35 @@ public final class ClientDtos {
     public record JdAnalysisDto(
             String jobDescriptionId, String title, String company, String seniority,
             List<String> keywords, List<RequirementDto> requirements) {
+    }
+
+    // ---- jd-service: JD optimization (ADR-033) ----------------------------
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public record OptimizationKeywordDto(String term, String priority, String category, List<String> evidenceIds) {
+    }
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public record OptimizationMatchDto(
+            String requirementId, List<String> evidenceIds, String matchStrength, String reason) {
+    }
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public record OptimizationMissingDto(String requirementId, String note) {
+    }
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public record OptimizationDataDto(
+            String targetRole, String targetCompany,
+            List<OptimizationKeywordDto> keywords,
+            List<OptimizationMatchDto> requirementMatches,
+            List<OptimizationMissingDto> missingRequirements) {
+    }
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public record JdOptimizationDto(
+            String id, String jobDescriptionId, OptimizationDataDto optimisation,
+            List<String> citedEvidenceIds) {
     }
 
     // ---- profile-service --------------------------------------------------

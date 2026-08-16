@@ -126,7 +126,7 @@ export function getApplication(id: string): Promise<Application> {
 
 /** Attaches (or replaces) the generated resume reference on an existing application — the
  *  same reference-recording pattern `generateEmail`/`generateCoverLetter` use, except resume
- *  *generation* itself stays with resume-service (unchanged, see resumeApi.ts); this only
+ *  Legacy: resume generation was removed (ADR-033); this only
  *  records the resulting `resumeVersionId`, used by the "Generate All" flow. */
 export function attachResume(applicationId: string, resumeVersionId: string): Promise<Application> {
   return apiFetch<Application>(`/api/applications/${applicationId}/resume`, {
@@ -172,6 +172,26 @@ export function generateCoverLetter(applicationId: string): Promise<CoverLetterV
 /** The latest generated cover letter. `404` if none has been generated yet. */
 export function getCoverLetter(applicationId: string): Promise<CoverLetterVersion> {
   return apiFetch<CoverLetterVersion>(`/api/applications/${applicationId}/cover-letter`);
+}
+
+export interface FallbackPrompt {
+  coverLetterVersionId: string;
+  outputFormat: string;
+  prompt: string;
+}
+
+/**
+ * The document-generation fallback prompt (see application-service's `FallbackPromptBuilder`,
+ * mirroring resume-service's own) — a complete, ready-to-paste external-AI prompt built
+ * deterministically from this cover-letter version's already-validated content. Called only
+ * after document-service has failed to produce a PDF/DOCX after its allowed retry — never
+ * calls Groq/Gemini, never regenerates anything.
+ */
+export function getCoverLetterFallbackPrompt(
+  coverLetterVersionId: string,
+  format: 'PDF' | 'DOCX' = 'PDF',
+): Promise<FallbackPrompt> {
+  return apiFetch<FallbackPrompt>(`/api/applications/cover-letter-versions/${coverLetterVersionId}/fallback-prompt?format=${format}`);
 }
 
 /** Paged application history for the /dashboard screen. */

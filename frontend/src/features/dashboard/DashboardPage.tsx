@@ -16,7 +16,6 @@ import {
   LockIcon,
   MailIcon,
   PlusCircleIcon,
-  SendIcon,
   ShieldCheckIcon,
   SparkleIcon,
 } from './icons';
@@ -24,9 +23,6 @@ import { UserMenu } from '@/components/layout/UserMenu';
 import { listApplications } from '@/services/applicationApi';
 import * as profileApi from '@/services/profileApi';
 import { computeProfileCompletion } from '@/services/profileApi';
-import { listResumes } from '@/services/resumeApi';
-import { applicationsToResumeItems, mergeResumeItemsByDate, standaloneToResumeItems } from '../resumes/resumeListUtils';
-import { formatDate } from './utils';
 
 // Dashboard is a summary/overview only — every section below caps itself at 5 rows and links
 // to a dedicated page (routes/router.tsx) that owns the complete, searchable/filterable/
@@ -54,18 +50,8 @@ export function DashboardPage() {
   });
   const summaryApplications = summaryQuery.data?.content ?? [];
   const recentApplications = summaryApplications.slice(0, RECENT_LIMIT);
-  const coverLetterApplications = summaryApplications.filter((a) => a.coverLetterVersionId);
   const emailApplications = summaryApplications.filter((a) => a.emailId);
 
-  // Resumes generated before Applications became the primary unit (or by any flow that still
-  // doesn't create one) have no `Application` record — see resumeListUtils.ts.
-  const legacyResumesQuery = useQuery({ queryKey: ['resumes', 0], queryFn: () => listResumes(0, 20) });
-  const legacyResumes = legacyResumesQuery.data?.content ?? [];
-  const resumeCount = (legacyResumesQuery.data?.totalElements ?? 0) + summaryApplications.filter((a) => a.resumeVersionId).length;
-  const recentResumes = mergeResumeItemsByDate(
-    applicationsToResumeItems(summaryApplications),
-    standaloneToResumeItems(legacyResumes),
-  ).slice(0, RECENT_LIMIT);
 
   const profileQuery = useQuery({ queryKey: ['profile'], queryFn: profileApi.getProfile });
   const completion = profileQuery.data ? computeProfileCompletion(profileQuery.data) : null;
@@ -103,28 +89,7 @@ export function DashboardPage() {
             </div>
 
             {/* Summary cards */}
-            <div className="mt-6 grid grid-cols-2 gap-4 lg:grid-cols-4">
-              <SummaryCard
-                icon={<DocumentIcon className="h-5 w-5" />}
-                iconClassName="bg-ember/10 text-ember-soft"
-                label="Applications"
-                count={summaryQuery.data?.totalElements ?? 0}
-                description="Total applications"
-              />
-              <SummaryCard
-                icon={<DocumentIcon className="h-5 w-5" />}
-                iconClassName="bg-mint/10 text-mint"
-                label="Resumes"
-                count={resumeCount}
-                description="Total resumes"
-              />
-              <SummaryCard
-                icon={<SendIcon className="h-5 w-5" />}
-                iconClassName="bg-rose/10 text-rose"
-                label="Cover letters"
-                count={coverLetterApplications.length}
-                description="Total cover letters"
-              />
+            <div className="mt-6 grid grid-cols-2 gap-4 lg:grid-cols-2">
               <SummaryCard
                 icon={<MailIcon className="h-5 w-5" />}
                 iconClassName="bg-surface-2 text-ink-muted"
@@ -161,51 +126,7 @@ export function DashboardPage() {
                   )}
                 </RecentSection>
 
-                <RecentSection title="Recent Resumes" viewAllHref="/resumes">
-                  {(summaryQuery.isLoading || legacyResumesQuery.isLoading) && (
-                    <p className="text-sm text-ink-faint">Loading…</p>
-                  )}
-                  {legacyResumesQuery.isError && <ErrorBanner error={legacyResumesQuery.error} />}
-                  {!legacyResumesQuery.isLoading && recentResumes.length === 0 && (
-                    <EmptyState title="No resumes yet." hint="Your generated resumes will appear here." />
-                  )}
-                  {recentResumes.length > 0 && (
-                    <ul className="divide-y divide-border overflow-hidden rounded-xl border border-border">
-                      {recentResumes.map((item) => (
-                        <li key={item.key}>
-                          <Link
-                            to={item.viewHref}
-                            className="flex items-center justify-between gap-4 px-5 py-4 transition-colors hover:bg-surface-2"
-                          >
-                            <div className="min-w-0">
-                              <p className="truncate text-sm font-medium text-ink">{item.jobTitle ?? 'Untitled role'}</p>
-                              <p className="mt-0.5 text-xs text-ink-faint">
-                                {item.company ?? 'Unknown company'} · {formatDate(item.createdAt)}
-                              </p>
-                            </div>
-                            <span className="shrink-0 rounded-full border border-border-strong px-2.5 py-1 text-xs text-ink-muted">
-                              Resume
-                            </span>
-                          </Link>
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-                </RecentSection>
 
-                <RecentSection title="Recent Cover Letters" viewAllHref="/cover-letters">
-                  {summaryQuery.isLoading && <p className="text-sm text-ink-faint">Loading…</p>}
-                  {!summaryQuery.isLoading && coverLetterApplications.length === 0 && (
-                    <EmptyState title="No cover letters yet." hint="Generated cover letters will appear here." />
-                  )}
-                  {coverLetterApplications.length > 0 && (
-                    <ul className="space-y-3">
-                      {coverLetterApplications.slice(0, RECENT_LIMIT).map((item) => (
-                        <ApplicationRow key={item.id} item={item} />
-                      ))}
-                    </ul>
-                  )}
-                </RecentSection>
 
                 <RecentSection title="Recent Emails" viewAllHref="/emails">
                   {summaryQuery.isLoading && <p className="text-sm text-ink-faint">Loading…</p>}
@@ -221,40 +142,6 @@ export function DashboardPage() {
                   )}
                 </RecentSection>
 
-                <RecentSection
-                  id="resume-history"
-                  title="Resume history"
-                  description="Resumes generated without a tracked application — still here, still downloadable."
-                  viewAllHref="/resumes"
-                >
-                  {legacyResumesQuery.isLoading && <p className="text-sm text-ink-faint">Loading…</p>}
-                  {legacyResumesQuery.isError && <ErrorBanner error={legacyResumesQuery.error} />}
-                  {legacyResumesQuery.data && legacyResumes.length === 0 && (
-                    <EmptyState title="Nothing here yet." hint="Your generated resumes will appear here." />
-                  )}
-                  {legacyResumes.length > 0 && (
-                    <ul className="divide-y divide-border overflow-hidden rounded-xl border border-border">
-                      {legacyResumes.slice(0, RECENT_LIMIT).map((item) => (
-                        <li key={item.id}>
-                          <Link
-                            to={`/results/${item.id}`}
-                            className="flex items-center justify-between gap-4 px-5 py-4 transition-colors hover:bg-surface-2"
-                          >
-                            <div className="min-w-0">
-                              <p className="truncate text-sm font-medium text-ink">{item.jobTitle ?? 'Untitled role'}</p>
-                              <p className="mt-0.5 text-xs text-ink-faint">
-                                {item.company ?? 'Unknown company'} · {formatDate(item.createdAt)}
-                              </p>
-                            </div>
-                            <span className="shrink-0 rounded-full border border-border-strong px-2.5 py-1 text-xs text-ink-muted">
-                              Resume
-                            </span>
-                          </Link>
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-                </RecentSection>
               </div>
 
               {/* Right-side widgets */}

@@ -34,6 +34,13 @@ public class MongoIndexInitializer implements ApplicationRunner {
         mongoTemplate.indexOps("jd_analyses").ensureIndex(
                 new Index().on("jdVersionId", Sort.Direction.ASC).unique());
 
+        // One current optimization per JD version (see JdOptimization's own Javadoc), and
+        // every read is owner-scoped.
+        mongoTemplate.indexOps("jd_optimizations").ensureIndex(
+                new Index().on("jdVersionId", Sort.Direction.ASC).unique());
+        mongoTemplate.indexOps("jd_optimizations").ensureIndex(
+                new CompoundIndexDefinition(new Document("userId", 1).append("createdAt", -1)));
+
         log.info("jd-service Mongo indexes ensured");
     }
 }

@@ -6,11 +6,10 @@ import ai.careerforge.ai.client.GroqClient;
 import ai.careerforge.ai.client.GroqException;
 import ai.careerforge.ai.config.GroqProperties;
 import ai.careerforge.ai.prompt.PromptRegistry;
-import ai.careerforge.ai.service.CoverLetterContentService;
 import ai.careerforge.ai.service.EmailContentService;
 import ai.careerforge.ai.service.EvidenceSelectionService;
 import ai.careerforge.ai.service.JdAnalysisService;
-import ai.careerforge.ai.service.ResumeContentService;
+import ai.careerforge.ai.service.JdOptimizationService;
 import ai.careerforge.common.error.ApiException;
 import ai.careerforge.common.error.ErrorCode;
 import jakarta.validation.Valid;
@@ -28,8 +27,9 @@ import org.springframework.web.bind.annotation.RestController;
  *
  * <p><strong>Not routed through the API Gateway (ADR-012).</strong> A browser-reachable AI
  * endpoint would let a caller bypass JD confirmation, evidence selection and grounding, and
- * drive Groq spend arbitrarily. Every legitimate call originates from jd-service or
- * resume-service on the internal network.
+ * drive Groq spend arbitrarily. Every legitimate call originates from jd-service,
+ * jd-service or application-service, both on the
+ * internal network.
  */
 @RestController
 @RequestMapping("/internal/ai")
@@ -39,29 +39,36 @@ public class AiController {
 
     private final JdAnalysisService jdAnalysisService;
     private final EvidenceSelectionService evidenceSelectionService;
-    private final ResumeContentService resumeContentService;
-    private final CoverLetterContentService coverLetterContentService;
     private final EmailContentService emailContentService;
+    private final JdOptimizationService jdOptimizationService;
     private final GroqClient groqClient;
     private final GroqProperties groqProperties;
     private final PromptRegistry promptRegistry;
 
     public AiController(JdAnalysisService jdAnalysisService,
                         EvidenceSelectionService evidenceSelectionService,
-                        ResumeContentService resumeContentService,
-                        CoverLetterContentService coverLetterContentService,
                         EmailContentService emailContentService,
+                        JdOptimizationService jdOptimizationService,
                         GroqClient groqClient,
                         GroqProperties groqProperties,
                         PromptRegistry promptRegistry) {
         this.jdAnalysisService = jdAnalysisService;
         this.evidenceSelectionService = evidenceSelectionService;
-        this.resumeContentService = resumeContentService;
-        this.coverLetterContentService = coverLetterContentService;
         this.emailContentService = emailContentService;
+        this.jdOptimizationService = jdOptimizationService;
         this.groqClient = groqClient;
         this.groqProperties = groqProperties;
         this.promptRegistry = promptRegistry;
+    }
+
+    /**
+     * JD optimization (ADR-033) — the operation that replaced resume/cover-letter content
+     * generation. Returns targeting data (keywords, matches, gaps, emphasis), never prose.
+     */
+    @PostMapping("/jd-optimization")
+    public ResponseEntity<AiResponses.JdOptimizationResponse> optimiseForJd(
+            @Valid @RequestBody AiRequests.JdOptimizationRequest request) {
+        return ResponseEntity.ok(call(() -> jdOptimizationService.optimise(request)));
     }
 
     /** Extracts structured requirements from untrusted job-description text. */
@@ -78,19 +85,7 @@ public class AiController {
         return ResponseEntity.ok(call(() -> evidenceSelectionService.select(request)));
     }
 
-    /** Stage 2: writes resume content, then verifies every statement against the evidence. */
-    @PostMapping("/resume-content")
-    public ResponseEntity<AiResponses.ResumeContentResponse> generateResumeContent(
-            @Valid @RequestBody AiRequests.ResumeContentRequest request) {
-        return ResponseEntity.ok(call(() -> resumeContentService.generate(request)));
-    }
 
-    /** Grounded cover-letter content, using the evidence ids selected in the previous stage. */
-    @PostMapping("/cover-letter")
-    public ResponseEntity<AiResponses.CoverLetterContentResponse> generateCoverLetter(
-            @Valid @RequestBody AiRequests.CoverLetterContentRequest request) {
-        return ResponseEntity.ok(call(() -> coverLetterContentService.generate(request)));
-    }
 
     /** Grounded application-email content — single-shot, picks directly from the full
      *  evidence inventory (see ARCHITECTURE_DECISIONS.md ADR-019). */
@@ -99,6 +94,7 @@ public class AiController {
             @Valid @RequestBody AiRequests.EmailContentRequest request) {
         return ResponseEntity.ok(call(() -> emailContentService.generate(request)));
     }
+
 
     /**
      * Diagnostic: is Groq configured and reachable?
@@ -133,14 +129,20 @@ public class AiController {
     }
 
     /**
-     * Translates Groq transport failures into the platform error envelope. Retryable
-     * failures become 502 so the caller can decide to try again; anything else is a
-     * request-shaped problem the caller must fix.
+     * Translates Groq transport failures into the platform error envelope. A rate limit
+     * (429) is reported as such; anything else retryable becomes 502 so the caller can decide
+     * to try again; the rest is a request-shaped problem the caller must fix.
      */
     private <T> T call(java.util.function.Supplier<T> action) {
         try {
             return action.get();
         } catch (GroqException ex) {
+            if (ex.isRateLimited()) {
+                // A quota problem, not a failed generation: 429 tells the caller (and the user)
+                // that waiting is the fix, where a 502 implied something was broken.
+                throw new ApiException(ErrorCode.RATE_LIMIT_EXCEEDED,
+                        "The AI provider's rate limit was reached. Please wait a minute and retry.");
+            }
             throw new ApiException(
                     ex.isRetryable() ? ErrorCode.AI_GENERATION_FAILED : ErrorCode.VALIDATION_ERROR,
                     ex.isRetryable()

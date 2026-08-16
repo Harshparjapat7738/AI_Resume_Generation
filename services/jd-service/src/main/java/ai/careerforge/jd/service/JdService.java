@@ -108,6 +108,29 @@ public class JdService {
         return jobDescriptions.findByIdAndUserId(id, userId).orElseThrow(ApiException::notOwned);
     }
 
+    /**
+     * Edits the JD's text before it's confirmed — the Review step's "Edit JD" action. Creates a
+     * new, immutable {@link JdVersion} rather than mutating the existing one (see that class's
+     * own comment) and advances {@code currentVersion} to point at it; a JD version that was
+     * ever the basis for a confirmation/analysis is never altered after the fact. Blocked once
+     * {@link JobDescriptionStatus#CONFIRMED} — {@code confirmedVersion} pins analysis to an
+     * exact version, and letting the text keep changing underneath an already-confirmed (and
+     * possibly already-analysed) JD would silently desync the two.
+     */
+    public JobDescription editText(String userId, String id, String rawText) {
+        JobDescription jd = requireOwned(userId, id);
+        if (jd.status() == JobDescriptionStatus.CONFIRMED) {
+            throw new ApiException(ErrorCode.CONFLICT,
+                    "This job description has already been confirmed and can no longer be edited.");
+        }
+
+        String normalised = normalise(rawText);
+        int nextVersion = jd.currentVersion() + 1;
+        jdVersions.save(new JdVersion(jd.id(), nextVersion, rawText, normalised, "TEXT_EDIT"));
+        jd.applyEdit(nextVersion);
+        return jobDescriptions.save(jd);
+    }
+
     public JdVersion currentVersion(JobDescription jd) {
         return jdVersions.findByJobDescriptionIdAndVersion(jd.id(), jd.currentVersion())
                 .orElseThrow(() -> new ApiException(ErrorCode.INTERNAL_ERROR));

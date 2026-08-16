@@ -1,10 +1,12 @@
 package ai.careerforge.jd.api;
 
 import ai.careerforge.common.security.CallerId;
+import ai.careerforge.jd.api.dto.JdRequests.EditJdRequest;
 import ai.careerforge.jd.api.dto.JdRequests.FetchUrlRequest;
 import ai.careerforge.jd.api.dto.JdRequests.SubmitJdRequest;
 import ai.careerforge.jd.api.dto.JdResponses.JdAnalysisResponse;
 import ai.careerforge.jd.api.dto.JdResponses.JdDetailResponse;
+import ai.careerforge.jd.api.dto.JdResponses.JdOptimizationResponse;
 import ai.careerforge.jd.api.dto.JdResponses.JdSummaryResponse;
 import ai.careerforge.jd.api.dto.JdResponses.PageResponse;
 import ai.careerforge.jd.api.dto.JdResponses.RequirementResponse;
@@ -20,6 +22,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -31,10 +34,14 @@ import org.springframework.web.bind.annotation.RestController;
 public class JdController {
 
     private final JdService jdService;
+    private final ai.careerforge.jd.service.JdOptimizationService jdOptimizationService;
     private final ai.careerforge.jd.repository.JobDescriptionRepository jobDescriptions;
 
-    public JdController(JdService jdService, ai.careerforge.jd.repository.JobDescriptionRepository jobDescriptions) {
+    public JdController(JdService jdService,
+                        ai.careerforge.jd.service.JdOptimizationService jdOptimizationService,
+                        ai.careerforge.jd.repository.JobDescriptionRepository jobDescriptions) {
         this.jdService = jdService;
+        this.jdOptimizationService = jdOptimizationService;
         this.jobDescriptions = jobDescriptions;
     }
 
@@ -56,11 +63,18 @@ public class JdController {
     @GetMapping("/{id}")
     public ResponseEntity<JdDetailResponse> get(@CallerId String userId, @PathVariable String id) {
         JobDescription jd = jdService.requireOwned(userId, id);
-        JdVersion version = jdService.currentVersion(jd);
-        return ResponseEntity.ok(new JdDetailResponse(
-                jd.id(), jd.status().name(), jd.sourceType(), jd.sourceUrl(),
-                jd.title(), jd.company(), jd.location(), jd.skillsSummary(), jd.experienceSummary(),
-                version.rawText(), jd.currentVersion(), jd.createdAt()));
+        return ResponseEntity.ok(toDetail(jd));
+    }
+
+    /** The Review step's "Edit JD" action — replaces the pre-confirmation text with a new
+     *  version and returns the same shape {@code GET /{id}} does, so the frontend can just
+     *  swap its cached JD detail for the response body. {@code 409 CONFLICT} once the JD is
+     *  already confirmed (see {@code JdService#editText}). */
+    @PutMapping("/{id}")
+    public ResponseEntity<JdDetailResponse> edit(@CallerId String userId, @PathVariable String id,
+                                                  @Valid @RequestBody EditJdRequest request) {
+        JobDescription jd = jdService.editText(userId, id, request.jobDescriptionText());
+        return ResponseEntity.ok(toDetail(jd));
     }
 
     @PostMapping("/{id}/confirm")
@@ -79,6 +93,34 @@ public class JdController {
                         .toList()));
     }
 
+    /**
+     * Optimises the caller's verified profile against this confirmed job description (ADR-033) —
+     * the operation that replaced resume/cover-letter generation. Returns targeting data, never
+     * a document.
+     *
+     * <p>Re-reads an existing result for the same JD version rather than spending another AI
+     * request; pass {@code refresh=true} to recompute, which is what a profile edit warrants.
+     */
+    @PostMapping("/{id}/optimize")
+    public ResponseEntity<JdOptimizationResponse> optimize(
+            @CallerId String userId, @PathVariable String id,
+            @RequestParam(defaultValue = "false") boolean refresh) {
+        return ResponseEntity.ok(toOptimization(jdOptimizationService.optimise(userId, id, refresh)));
+    }
+
+    /** The current optimization for this JD, if one has been computed. 404 when none exists. */
+    @GetMapping("/{id}/optimization")
+    public ResponseEntity<JdOptimizationResponse> optimization(@CallerId String userId, @PathVariable String id) {
+        return jdOptimizationService.findForJobDescription(userId, id)
+                .map(result -> ResponseEntity.ok(toOptimization(result)))
+                .orElseThrow(ai.careerforge.common.error.ApiException::notOwned);
+    }
+
+    private static JdOptimizationResponse toOptimization(ai.careerforge.jd.domain.JdOptimization result) {
+        return new JdOptimizationResponse(result.id(), result.jobDescriptionId(),
+                result.optimisation(), result.citedEvidenceIds(), result.createdAt());
+    }
+
     @GetMapping
     public ResponseEntity<PageResponse<JdSummaryResponse>> list(
             @CallerId String userId,
@@ -94,5 +136,13 @@ public class JdController {
 
     private static JdSummaryResponse toSummary(JobDescription jd) {
         return new JdSummaryResponse(jd.id(), jd.status().name(), jd.sourceType(), jd.title(), jd.company(), jd.createdAt());
+    }
+
+    private JdDetailResponse toDetail(JobDescription jd) {
+        JdVersion version = jdService.currentVersion(jd);
+        return new JdDetailResponse(
+                jd.id(), jd.status().name(), jd.sourceType(), jd.sourceUrl(),
+                jd.title(), jd.company(), jd.location(), jd.skillsSummary(), jd.experienceSummary(),
+                version.rawText(), jd.currentVersion(), jd.createdAt());
     }
 }

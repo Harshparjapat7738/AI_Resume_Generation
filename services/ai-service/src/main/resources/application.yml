@@ -54,17 +54,20 @@ logging:
 # ---------------------------------------------------------------------------
 # Groq. The API key is supplied via GROQ_API_KEY and exists in this process only.
 # It is never logged, never returned to a client, and never reaches the frontend.
+# Groq is the sole provider for every JSON/content-generation operation (JD Analysis, Evidence
+# Selection, Resume Content, Cover Letter Content, Email Content) — ADR-032.
 # ---------------------------------------------------------------------------
 careerforge:
   groq:
     api-key: ${GROQ_API_KEY:}
     base-url: ${GROQ_BASE_URL:https://api.groq.com/openai/v1}
-    model: ${GROQ_MODEL:llama-3.3-70b-versatile}
+    model: ${GROQ_MODEL:openai/gpt-oss-120b}
     timeout-seconds: ${GROQ_TIMEOUT_SECONDS:60}
     max-output-tokens: ${GROQ_MAX_OUTPUT_TOKENS:4096}
     # Extraction and grounded rewriting, not creative writing: keep it near-deterministic.
     temperature: ${GROQ_TEMPERATURE:0.2}
     max-retries: ${GROQ_MAX_RETRIES:2}
+
 
 resilience4j:
   circuitbreaker:

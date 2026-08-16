@@ -7,12 +7,12 @@ export function Faq() {
   const [openIndex, setOpenIndex] = useState<number | null>(0);
 
   return (
-    <section id="faq" className="scroll-mt-20 border-t border-border bg-surface py-24">
+    <section id="faq" className="scroll-mt-20 border-t border-border bg-surface py-20 sm:py-24">
       <div className="mx-auto max-w-3xl px-6">
         <Reveal className="text-center">
-          <p className="text-sm font-medium uppercase tracking-wide text-ember-soft">FAQ</p>
+          <p className="text-sm font-semibold uppercase tracking-wide text-brand">FAQ</p>
           <h2 className="mt-3 text-3xl font-semibold tracking-tight text-ink sm:text-4xl">
-            Questions people actually ask.
+            Questions people actually ask
           </h2>
         </Reveal>
 

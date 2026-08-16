@@ -16,7 +16,7 @@ import org.springframework.validation.annotation.Validated;
  *
  * @param apiKey          GROQ_API_KEY — secret, never logged, never returned to a client
  * @param baseUrl         OpenAI-compatible base URL
- * @param model           model identifier, e.g. {@code llama-3.3-70b-versatile}
+ * @param model           model identifier, e.g. {@code openai/gpt-oss-120b}
  * @param timeoutSeconds  per-request timeout
  * @param maxOutputTokens upper bound on generated tokens, to cap cost and latency
  * @param temperature     low by default: this is extraction, not creative writing

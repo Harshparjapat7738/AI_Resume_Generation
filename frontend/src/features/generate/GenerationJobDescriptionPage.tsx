@@ -10,12 +10,11 @@ import { TextArea } from '@/components/ui/TextArea';
 import { TextField } from '@/components/ui/TextField';
 import { DashboardSidebar } from '@/features/dashboard/components/DashboardSidebar';
 import { ApiError } from '@/services/apiClient';
-import type { GenerationType } from '@/services/applicationApi';
 import { fetchJdFromUrl, submitJd } from '@/services/jdApi';
 import { useSession } from '@/services/session';
 import { GenerationCta } from './components/GenerationCta';
-import { GenerationProgress } from './components/GenerationProgress';
-import { GenerationTypeBadge, JobContextPanel } from './components/JobContextPanel';
+import { GenerationProgress, stepsForGenerationType } from './components/GenerationProgress';
+import { GenerationTypeBadge, JobContextPanel, type GenerationFlowType } from './components/JobContextPanel';
 import { ReviewHeader } from './components/ReviewHeader';
 import { clearJdDraft, readJdDraft, writeJdDraft } from './utils/jdDraft';
 
@@ -33,27 +32,23 @@ const urlSchema = z.object({
 });
 type UrlFormValues = z.infer<typeof urlSchema>;
 
-const SUBTITLES: Record<GenerationType, string> = {
-  RESUME_ONLY: "Tell us about the role you're applying for.",
-  COVER_LETTER_ONLY: "We'll use this job description to personalize your cover letter.",
+const SUBTITLES: Record<GenerationFlowType, string> = {
+  JD_OPTIMIZATION: "We'll use this job description to analyze your fit and build your JD optimization.",
   EMAIL_ONLY: "We'll use this job description to create your professional application email.",
-  ALL: "We'll use this job description to generate your complete application package.",
 };
 
-const CTA_DESCRIPTIONS: Record<GenerationType, string> = {
-  RESUME_ONLY: "Next you'll review your match against this role, then choose a resume template.",
-  COVER_LETTER_ONLY: "Next you'll review your match against this role before generating your cover letter.",
+const CTA_DESCRIPTIONS: Record<GenerationFlowType, string> = {
+  JD_OPTIMIZATION: "Next you'll review your match against this role, then generate your JD optimization.",
   EMAIL_ONLY: "Next you'll review your match against this role before generating your email.",
-  ALL: "Next you'll review your match against this role before generating your complete application package.",
 };
 
 /**
- * The shared "Job Description" step (redesign brief) — one component behind RESUME_ONLY /
- * COVER_LETTER_ONLY / EMAIL_ONLY / ALL alike, matching `GenerationReviewPage`'s layout pattern
- * (sidebar + compact header + full-width workspace). Only the heading badge, subtitle, the
- * generation-context panel and the Continue CTA's description vary by `generationType` — the
- * paste/URL input itself, its validation and its submit handlers are unchanged from the
- * original `JobDescriptionPage`.
+ * The shared "Job Description" step (redesign brief) — one component behind both remaining
+ * generation flows, JD Optimization and Email (ADR-033), matching `GenerationReviewPage`'s
+ * layout pattern (sidebar + compact header + full-width workspace). Only the heading badge,
+ * subtitle, the generation-context panel and the Continue CTA's description vary by
+ * `generationType` — the paste/URL input itself, its validation and its submit handlers are
+ * identical either way.
  *
  * The actual "Continue" action stays a single button with that exact, literal label rather than
  * per-type phrasing ("Continue to template" / "Continue to review") — every e2e spec that drives
@@ -65,16 +60,13 @@ export function GenerationJobDescriptionPage() {
   const { data: user } = useSession();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  // Carried as a query param (not route state) so it survives a reload, matching how
-  // TemplatePage later carries templateId to ProcessingPage. Defaults to the resume flow so a
-  // direct/bookmarked link to this page keeps working exactly as before.
-  const generationType = (searchParams.get('type') as GenerationType | null) ?? 'RESUME_ONLY';
-  // Optional — set only when arriving from the Templates page's "Use this template" action, so
-  // TemplatePage can preselect it instead of the user having to pick it again. Just forwarded
-  // along here, same as `type`; this page has no template UI of its own, only a read-only
-  // preview of it (see JobContextPanel).
-  const preselectedTemplateId = searchParams.get('templateId');
-  const templateParam = preselectedTemplateId ? `&templateId=${preselectedTemplateId}` : '';
+  // Carried as a query param (not route state) so it survives a reload — matches how
+  // OutputTypePage navigates here (`?type=JD_OPTIMIZATION` or `?type=EMAIL_ONLY`, the only two
+  // values it ever sends, ADR-033). Anything else (missing param, a stale bookmarked link from
+  // before ADR-033 removed RESUME_ONLY/COVER_LETTER_ONLY/ALL) defaults to the optimization flow
+  // rather than being cast/trusted as-is — see JobContextPanel.tsx's own comment on why that
+  // cast was never actually safe.
+  const generationType: GenerationFlowType = searchParams.get('type') === 'EMAIL_ONLY' ? 'EMAIL_ONLY' : 'JD_OPTIMIZATION';
 
   // Read once, synchronously, before the forms below initialize from it — restores whatever the
   // user had typed/pasted/fetched if they navigated away from this step and came back before
@@ -124,7 +116,7 @@ export function GenerationJobDescriptionPage() {
       // from there, so the local draft has done its job and won't leak into a later, unrelated
       // visit to this step.
       clearJdDraft();
-      navigate(`/generate/review/${jd.id}?type=${generationType}${templateParam}`);
+      navigate(`/generate/review/${jd.id}?type=${generationType}`);
     } catch (error) {
       setSubmitError(error);
     }
@@ -135,7 +127,7 @@ export function GenerationJobDescriptionPage() {
     try {
       const jd = await fetchJdFromUrl(values.url);
       clearJdDraft();
-      navigate(`/generate/review/${jd.id}?type=${generationType}${templateParam}`);
+      navigate(`/generate/review/${jd.id}?type=${generationType}`);
     } catch (error) {
       setUrlError(error);
     }
@@ -159,7 +151,7 @@ export function GenerationJobDescriptionPage() {
   }
 
   const displayName = user.displayName?.trim() || user.email;
-  const subtitle = SUBTITLES[generationType] ?? SUBTITLES.RESUME_ONLY;
+  const subtitle = SUBTITLES[generationType];
 
   return (
     <div className="flex min-h-screen bg-void">
@@ -175,7 +167,7 @@ export function GenerationJobDescriptionPage() {
 
         <main className="min-w-0 flex-1 px-5 py-7 pl-16 sm:px-7 lg:px-10 lg:py-9 lg:pl-10">
           <div className="mx-auto max-w-[1680px]">
-            <GenerationProgress activeStep={1} />
+            <GenerationProgress activeStep={1} steps={stepsForGenerationType(generationType)} />
 
             <div className="mt-6 flex flex-wrap items-center gap-3">
               <h1 className="text-2xl font-semibold tracking-tight text-ink sm:text-[28px]">
@@ -280,14 +272,14 @@ export function GenerationJobDescriptionPage() {
                 )}
               </div>
 
-              <JobContextPanel generationType={generationType} preselectedTemplateId={preselectedTemplateId} />
+              <JobContextPanel generationType={generationType} />
             </div>
 
             {tab === 'paste' && (
               <div className="mt-6">
                 <GenerationCta
                   heading="Ready to continue?"
-                  description={CTA_DESCRIPTIONS[generationType] ?? CTA_DESCRIPTIONS.RESUME_ONLY}
+                  description={CTA_DESCRIPTIONS[generationType]}
                   ctaLabel="Continue"
                   loading={pasteForm.formState.isSubmitting}
                   onGenerate={() => {

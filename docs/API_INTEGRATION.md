@@ -28,9 +28,8 @@ One `*Api.ts` module per service, matching its DTOs field-for-field:
 | `authApi.ts` | auth-service | register, login, refresh, logout, me |
 | `profileApi.ts` | profile-service | get/update personal info; CRUD for education/experience/skills/projects/certifications/achievements; evidence; `isProfileComplete()` and `computeProfileCompletion()` heuristics |
 | `jdApi.ts` | jd-service | submit (paste), fetch-url (URL intake), get, confirm, analysis |
-| `resumeApi.ts` | resume-service | generate, get, list (history) |
 | `assessmentApi.ts` | assessment-service | assess (compute), get (cached read) |
-| `applicationApi.ts` | application-service | create/get/list `Application`; generate/get email; generate/get cover letter |
+| `applicationApi.ts` | application-service | create/get/list `Application`; generate/get email; generate/get cover letter; cover-letter document-generation fallback prompt |
 
 ## 2. Session state
 
@@ -193,7 +192,6 @@ real per-stage progress to report, so no fake staged checklist.
 - Template selection/upload/browse — no template backend of any kind exists; the review
   step shows a static "default format, template selection coming soon" line instead of a
   picker.
-- PDF/DOCX download — no `document-service`. The result page's "Download" button exports
   the real generated text content as a `.txt` file client-side (`Blob` + object URL) and
   says so explicitly; it never claims to produce a PDF.
 - Google OAuth — no "Sign in with Google" button.
@@ -202,3 +200,19 @@ real per-stage progress to report, so no fake staged checklist.
 - Profile version history and resume import — `/api/profile/versions` and
   `/api/profile/import` remain planned (`docs/API_CATALOG.md` §3); every profile edit is a
   live, immediate mutation with no snapshot/undo.
+
+## JD optimization (ADR-033)
+
+| Frontend file | Calls |
+|---|---|
+| `services/jdApi.ts` → `optimizeForJd(id, refresh)` | `POST /api/jd/{id}/optimize?refresh=` |
+| `services/jdApi.ts` → `getJdOptimization(id)` | `GET /api/jd/{id}/optimization` |
+| `features/generate/ProcessingPage.tsx` | calls `optimizeForJd`, then redirects to `/results/optimization/{jobDescriptionId}` |
+| `features/results/OptimizationResultPage.tsx` | `getJdOptimization`, plus `getAnalysis` (requirement text) and `getProfile` (evidence labels) purely for display |
+| `services/assessmentApi.ts` → `getAssessment(jobDescriptionId)` | `GET /api/assessment/{jobDescriptionId}` |
+
+Errors follow the platform envelope: `409 JD_NOT_CONFIRMED`, `422 VALIDATION_ERROR` (no
+requirements, or an empty profile), `429 RATE_LIMIT_EXCEEDED`, `502 AI_GENERATION_FAILED`,
+`404` for anything not owned by the caller.
+
+Email endpoints and their frontend callers are unchanged.

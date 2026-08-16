@@ -6,21 +6,21 @@ import { getAssessment } from '@/services/assessmentApi';
 import type { ApplicationSummary } from '@/services/applicationApi';
 import { formatDate, generationTypeLabel, statusStyle, templateLabel } from '../utils';
 
-/** ATS/JD-fit is scored per resume version, not per application — this fetches and renders it
- *  inline for a row, silently showing nothing if none has been run yet rather than an error
- *  (a missing assessment on a list row isn't something to alarm the user with). */
-function AssessmentSummary({ resumeVersionId }: { resumeVersionId: string }) {
+/** JD fit is scored per job description now, not per resume version (ADR-033) — this fetches
+ *  and renders it inline for a row, silently showing nothing if none has been run yet rather
+ *  than an error (a missing assessment on a list row isn't something to alarm the user with).
+ *  ATS scoring was removed along with resume generation. */
+function AssessmentSummary({ jobDescriptionId }: { jobDescriptionId: string }) {
   const query = useQuery({
-    queryKey: ['assessment', resumeVersionId],
-    queryFn: () => getAssessment(resumeVersionId),
-    enabled: Boolean(resumeVersionId),
+    queryKey: ['assessment', jobDescriptionId],
+    queryFn: () => getAssessment(jobDescriptionId),
+    enabled: Boolean(jobDescriptionId),
     retry: false,
   });
   if (!query.data) return null;
   return (
     <p className="mt-1 text-xs text-ink-muted">
-      ATS Compatibility: {Math.round(query.data.atsScore)}% · JD Match:{' '}
-      {Math.round(query.data.compatibilityScore * 100)}%
+      JD Match: {Math.round(query.data.compatibilityScore * 100)}%
     </p>
   );
 }
@@ -39,7 +39,7 @@ export function ApplicationRow({ item }: { item: ApplicationSummary }) {
             <p className="mt-0.5 text-xs text-ink-faint">{item.company ?? 'Unknown company'}</p>
             <p className="mt-2 text-xs text-ink-muted">{generationTypeLabel(item.generationType)}</p>
             {template && <p className="mt-0.5 text-[11px] text-ink-faint">Template: {template}</p>}
-            {item.resumeVersionId && <AssessmentSummary resumeVersionId={item.resumeVersionId} />}
+            {item.jobDescriptionId && <AssessmentSummary jobDescriptionId={item.jobDescriptionId} />}
           </div>
           <div className="flex shrink-0 flex-col items-end gap-2">
             <span className={`rounded-full px-2.5 py-1 text-xs font-medium ${statusStyle(item.status)}`}>

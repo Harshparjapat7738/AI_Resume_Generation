@@ -1,4 +1,5 @@
 import { useNavigate } from 'react-router-dom';
+import { ThemeToggle } from '@/components/layout/ThemeToggle';
 import { UserMenu } from '@/components/layout/UserMenu';
 import { useLogout } from '@/features/dashboard/hooks';
 import { useSession } from '@/services/session';
@@ -26,6 +27,7 @@ export function ReviewHeader({
   backTo,
   onBack,
   showSaveDraft = true,
+  onSaveDraft,
 }: {
   title: string;
   /** e.g. "Back to output" on the Job Description step — purely a label, doesn't change where
@@ -36,6 +38,9 @@ export function ReviewHeader({
   /** Off for steps that haven't persisted anything yet to truthfully "save" (e.g. the Job
    *  Description step before it's been submitted) — on by default for steps where it's true. */
   showSaveDraft?: boolean;
+  /** Override the default "just go to /dashboard" — e.g. Review's own Edit-JD flow needs to
+   *  check for an unsaved draft first, the same way its Back button does. */
+  onSaveDraft?: () => void;
 }) {
   const navigate = useNavigate();
   const { data: user } = useSession();
@@ -45,6 +50,11 @@ export function ReviewHeader({
     if (onBack) return onBack();
     if (backTo) return navigate(backTo);
     navigate(-1);
+  };
+
+  const saveDraft = () => {
+    if (onSaveDraft) return onSaveDraft();
+    navigate('/dashboard');
   };
 
   return (
@@ -66,10 +76,11 @@ export function ReviewHeader({
 
       {user && (
         <div className="flex shrink-0 items-center gap-3">
+          <ThemeToggle />
           {showSaveDraft && (
             <button
               type="button"
-              onClick={() => navigate('/dashboard')}
+              onClick={saveDraft}
               title="Your job description is already saved — come back to it anytime."
               className="hidden h-9 items-center gap-1.5 rounded-full border border-border-strong px-3.5 text-sm text-ink-muted transition-colors hover:border-ink-muted hover:text-ink sm:flex"
             >

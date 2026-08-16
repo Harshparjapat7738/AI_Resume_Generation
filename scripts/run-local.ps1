@@ -32,17 +32,15 @@ Set-Location $root
 
 $allServices = @(
     'config-server', 'discovery-server', 'api-gateway',
-    'auth-service', 'profile-service', 'jd-service', 'resume-service',
-    'ai-service', 'assessment-service', 'document-service',
-    'application-service', 'notification-service'
+    'auth-service', 'profile-service', 'jd-service',    'ai-service', 'assessment-service',    'application-service'
 )
 if ($Services.Count -eq 1 -and $Services[0] -eq 'all') { $Services = $allServices }
 
 $ports = @{
     'config-server' = 8888; 'discovery-server' = 8761; 'api-gateway' = 8080
     'auth-service' = 8081; 'profile-service' = 8082; 'jd-service' = 8083
-    'resume-service' = 8084; 'ai-service' = 8085; 'assessment-service' = 8086
-    'document-service' = 8087; 'application-service' = 8088; 'notification-service' = 8089
+    'ai-service' = 8085; 'assessment-service' = 8086
+    'application-service' = 8088
 }
 
 # ---------------------------------------------------------------- .env ------

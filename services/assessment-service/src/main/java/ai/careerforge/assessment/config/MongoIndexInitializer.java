@@ -23,11 +23,11 @@ public class MongoIndexInitializer implements ApplicationRunner {
 
     @Override
     public void run(ApplicationArguments args) {
-        mongoTemplate.indexOps("ats_assessments").ensureIndex(
-                new CompoundIndexDefinition(new Document("resumeVersionId", 1).append("userId", 1)).unique());
-
+        // ADR-033: keyed on the JD optimization, not a resume version. The old
+        // `resumeVersionId + userId` index and the whole `ats_assessments` collection are legacy
+        // — see docs/DATABASE.md for the documented drop procedure.
         mongoTemplate.indexOps("jd_fit_assessments").ensureIndex(
-                new CompoundIndexDefinition(new Document("resumeVersionId", 1).append("userId", 1)).unique());
+                new CompoundIndexDefinition(new Document("jdOptimizationId", 1).append("userId", 1)).unique());
 
         log.info("assessment-service Mongo indexes ensured");
     }

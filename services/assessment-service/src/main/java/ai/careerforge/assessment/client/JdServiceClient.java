@@ -10,4 +10,8 @@ public interface JdServiceClient {
 
     @GetMapping("/api/jd/{id}/analysis")
     JdAnalysisDto getAnalysis(@PathVariable("id") String jobDescriptionId);
+
+    /** The persisted JD optimization this assessment scores (ADR-033). */
+    @GetMapping("/api/jd/{id}/optimization")
+    ClientDtos.JdOptimizationDto getOptimization(@PathVariable("id") String jobDescriptionId);
 }

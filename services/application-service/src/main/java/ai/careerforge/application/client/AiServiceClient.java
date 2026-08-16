@@ -18,7 +18,7 @@ public interface AiServiceClient {
     EmailContentResponse generateEmailContent(@RequestBody EmailContentRequest request);
 
     /** Stage 1 of cover-letter generation: maps each requirement to the evidence that
-     *  supports it — identical contract to resume-service's own call to this endpoint. */
+     *  supports it — */
     @PostMapping("/evidence-selection")
     EvidenceSelectionResponse selectEvidence(@RequestBody EvidenceSelectionRequest request);
 

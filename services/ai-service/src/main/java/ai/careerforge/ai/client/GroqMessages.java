@@ -15,6 +15,13 @@ public final class GroqMessages {
     private GroqMessages() {
     }
 
+    /** {@code @JsonIgnoreProperties} because this doubles as the response-side shape too
+     *  (see {@code Choice.message}): reasoning-capable models (e.g. {@code openai/gpt-oss-120b})
+     *  add extra fields here (a {@code reasoning} field, when not suppressed by
+     *  {@code include_reasoning=false} below) that this client has no use for and must not choke
+     *  on — the same defensive stance {@link ChatResponse}/{@link Choice}/{@link Usage} already
+     *  take. */
+    @JsonIgnoreProperties(ignoreUnknown = true)
     public record Message(String role, String content) {
 
         public static Message system(String content) {
@@ -39,8 +46,18 @@ public final class GroqMessages {
             String model,
             List<Message> messages,
             Double temperature,
-            Integer max_tokens,
-            ResponseFormat response_format) {
+            // Groq deprecated `max_tokens` in favor of `max_completion_tokens` (identical
+            // semantics) across every model on the platform, not just reasoning ones — see
+            // console.groq.com/docs/api-reference.
+            Integer max_completion_tokens,
+            ResponseFormat response_format,
+            // openai/gpt-oss-120b (and -20b) include a chain-of-thought `reasoning` field on the
+            // assistant message by default, which this client never reads and which would only
+            // burn response-buffer/token budget for no benefit here — suppressed the same way
+            // the request never asks for anything else this app doesn't use. `null` (omitted,
+            // see @JsonInclude above) for any future non-reasoning model, where the field isn't
+            // meaningful.
+            Boolean include_reasoning) {
     }
 
     @JsonIgnoreProperties(ignoreUnknown = true)

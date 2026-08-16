@@ -14,7 +14,14 @@ import reactor.core.publisher.Mono;
 import reactor.util.retry.Retry;
 
 /**
- * The only class in the platform that talks to Groq.
+ * The only class in the platform that talks to Groq — the sole {@link AiChatClient}
+ * implementation (see that interface's Javadoc for why the interface exists and what it
+ * deliberately does not add), and therefore the provider behind every JSON/content-generation
+ * operation: JD Analysis, Evidence Selection, JD Optimization and Email Content (ADR-033).
+ *
+ * <p>Not marked {@code @Primary} — there is nothing to disambiguate from. Gemini was removed
+ * entirely by ADR-033, so this is the only {@code AiChatClient} bean; every call site injects
+ * the interface unqualified and resolves here.
  *
  * <p>Guarantees:
  * <ul>
@@ -27,7 +34,7 @@ import reactor.util.retry.Retry;
  * </ul>
  */
 @Component
-public class GroqClient {
+public class GroqClient implements AiChatClient {
 
     private static final Logger log = LoggerFactory.getLogger(GroqClient.class);
     private static final String CHAT_COMPLETIONS = "/chat/completions";
@@ -53,7 +60,8 @@ public class GroqClient {
      * @return the model's JSON content — still unvalidated; the caller must schema-check it
      * @throws GroqException when the call fails after retries, or returns no usable content
      */
-    public GroqResult complete(String systemPrompt, String userContent, String operation) {
+    @Override
+    public AiChatResult complete(String systemPrompt, String userContent, String operation) {
         Timer.Sample sample = Timer.start(meterRegistry);
 
         GroqMessages.ChatRequest request = new GroqMessages.ChatRequest(
@@ -62,7 +70,10 @@ public class GroqClient {
                         GroqMessages.Message.user(userContent)),
                 properties.temperature(),
                 properties.maxOutputTokens(),
-                GroqMessages.ResponseFormat.jsonObject());
+                GroqMessages.ResponseFormat.jsonObject(),
+                // Suppress gpt-oss's reasoning trace in the response — see ChatRequest's own
+                // comment on include_reasoning. A no-op for a non-reasoning model.
+                Boolean.FALSE);
 
         try {
             GroqMessages.ChatResponse response = webClient.post()
@@ -71,7 +82,8 @@ public class GroqClient {
                     .retrieve()
                     .onStatus(status -> status.value() == 429 || status.is5xxServerError(),
                             r -> Mono.error(new GroqException(
-                                    "Groq returned " + r.statusCode().value(), true)))
+                                    "Groq returned " + r.statusCode().value(), true,
+                                    r.statusCode().value() == 429, null)))
                     .onStatus(status -> status.is4xxClientError(),
                             r -> Mono.error(new GroqException(
                                     "Groq rejected the request: " + r.statusCode().value(), false)))
@@ -80,9 +92,20 @@ public class GroqClient {
                             .maxBackoff(Duration.ofSeconds(20))
                             .jitter(0.4)
                             .filter(this::isRetryable)
-                            .onRetryExhaustedThrow((spec, signal) -> new GroqException(
-                                    "Groq unavailable after " + signal.totalRetries() + " retries",
-                                    true, signal.failure())))
+                            // Preserve *why* the retries were exhausted. Reporting a 429 as
+                            // "Groq unavailable" sent everyone hunting for an outage when the
+                            // real cause was this account's per-minute token budget — and no
+                            // amount of second-scale backoff can outlast a per-minute window.
+                            .onRetryExhaustedThrow((spec, signal) -> {
+                                boolean rateLimited = signal.failure() instanceof GroqException groq
+                                        && groq.isRateLimited();
+                                String reason = rateLimited
+                                        ? "Groq rate limit (429) still exceeded after " + signal.totalRetries()
+                                                + " retries — the account's per-minute request/token budget is "
+                                                + "exhausted, not a Groq outage"
+                                        : "Groq unavailable after " + signal.totalRetries() + " retries";
+                                return new GroqException(reason, true, rateLimited, signal.failure());
+                            }))
                     .block(Duration.ofSeconds(properties.timeoutSeconds() + 5L));
 
             if (response == null || response.firstContent() == null) {
@@ -90,12 +113,12 @@ public class GroqClient {
             }
             if ("length".equals(response.firstFinishReason())) {
                 // Truncated output is invalid JSON; failing loudly beats persisting a
-                // half-written resume.
+                // half-written result.
                 throw new GroqException("Groq response was truncated at the token limit", false);
             }
 
             recordUsage(operation, response);
-            return new GroqResult(response.firstContent(), response.model(),
+            return new AiChatResult(response.firstContent(), response.model(),
                     response.usage() == null ? 0 : response.usage().total_tokens());
 
         } catch (GroqException ex) {
@@ -131,9 +154,5 @@ public class GroqClient {
         log.info("Groq call ok operation={} model={} promptTokens={} completionTokens={}",
                 operation, response.model(),
                 response.usage().prompt_tokens(), response.usage().completion_tokens());
-    }
-
-    /** Model output plus the metadata recorded on every generated artifact. */
-    public record GroqResult(String content, String model, int totalTokens) {
     }
 }

@@ -63,7 +63,7 @@ MongoDB Atlas Cluster
     └── cover_letter_versions
 ```
 
-`ai-service` and `notification-service` own no database (ADR-002).
+`ai-service` owns no database (ADR-002).
 
 ### Ownership rule
 
@@ -196,6 +196,30 @@ all six sections), and grounding validation resolves every generated claim back 
 `snapshot`, `createdAt`, `reason`. A resume records the profile version it was generated
 from, so an old resume stays explainable after the profile changes.
 
+**`templates`** — implemented (ADR-034), a separate collection from `profiles`: many rows per
+user (unlike the one-per-user profile document), one per uploaded Resume/Cover Letter file.
+
+```text
+templates
+├── userId
+├── name              display name — falls back to the filename minus its extension
+├── originalFilename
+├── fileType          PDF | DOCX
+├── documentType      RESUME | COVER_LETTER | BOTH — descriptive only, never branches behaviour
+├── objectKey         MinIO/S3 object key (random UUID) — never serialised over HTTP
+├── bucket
+├── byteSize
+├── sha256            duplicate-upload detection, scoped per user
+├── isDefault         one true per user at a time, not scoped per documentType (ADR-034)
+├── createdAt
+└── updatedAt
+```
+
+The file bytes themselves live in the same private MinIO/S3 bucket the now-deleted
+document-service used to own — profile-service is its only remaining consumer. No structural
+analysis, mail-merge mapping, or AI involvement of any kind touches an uploaded file; what a
+user downloads back is byte-for-byte what they uploaded.
+
 ### careerforge_jd
 
 **`job_descriptions`** — `userId`, `sourceType` (`TEXT` and `URL` implemented; `FILE`
@@ -211,6 +235,12 @@ Generation is impossible unless `status = CONFIRMED` (blueprint §4).
 **`jd_versions`** — `jobDescriptionId`, `version`, `rawText`, `normalisedText`,
 `extractionMethod`, `contentHash`, `createdAt`. Immutable; edits create a new version so
 the confirmation the user gave always points at exact bytes.
+
+**`jd_optimizations`** (ADR-033) — `userId`, `jobDescriptionId`, `jdVersionId`,
+`optimisation` (ai-service's validated JSON, stored verbatim), `citedEvidenceIds[]`,
+`promptVersion`, `modelId`, `createdAt`. Unique index on `jdVersionId` (one current result per
+JD version, replaced in place on refresh rather than accumulating), plus `userId + createdAt`.
+Holds no copy of the JD text or the profile — only ids pointing back at both.
 
 **`jd_analyses`** — `jobDescriptionId`, `jdVersionId`, `title`, `company`, `location`,
 `employmentType`, `seniority`, `yearsOfExperience`, `keywords[]`, `analysedAt`,
@@ -385,6 +415,8 @@ Created explicitly at startup by each service's index initialiser.
 | auth | `security_events` | `userId + occurredAt` | compound, desc | audit timeline |
 | profile | `profiles` | `userId` | unique | one profile per user |
 | profile | `profile_versions` | `userId + version` | unique | version history |
+| profile | `templates` | `userId + createdAt` | compound, desc | list-by-owner, newest first (ADR-034) — distinct from the legacy `resume.templates` rows below |
+| profile | `templates` | `userId + sha256` | compound | duplicate-upload detection |
 | jd | `job_descriptions` | `userId + createdAt` | compound, desc | dashboard listing |
 | jd | `job_descriptions` | `userId + status` | compound | "awaiting confirmation" |
 | jd | `jd_versions` | `jobDescriptionId + version` | unique | version retrieval |
@@ -510,3 +542,42 @@ Tracks blueprint §30A:
 - [ ] Atlas monitoring and alerts configured for production
 - [x] Connection timeouts and pooling specified
 - [x] Connection strings never committed *(`.env` gitignored; Gitleaks in CI)*
+
+
+---
+
+## Legacy collections (ADR-033) — retained, not dropped
+
+Resume and cover-letter generation, document rendering and ATS scoring were removed. These
+collections have **no remaining reader or writer** in the codebase, verified repository-wide:
+
+| Collection | Former owner | Reads | Writes |
+|---|---|---|---|
+| `resume_versions` | resume-service | NONE | NONE |
+| `resume_generations` | resume-service | NONE | NONE |
+| `cover_letter_versions` | application-service | NONE | NONE |
+| `rendered_documents` | document-service | NONE | NONE |
+| `custom_template_assets` | document-service | NONE | NONE |
+| `ats_assessments` | assessment-service | NONE | NONE |
+
+They are deliberately **not dropped** — they hold real user history. Procedure when you choose
+to remove them:
+
+```bash
+# 1. Back up first — this is the only copy.
+mongodump --uri "$MONGODB_URI" --db careerforge_resume     --out ./backup-adr033
+mongodump --uri "$MONGODB_URI" --db careerforge_document   --out ./backup-adr033
+mongodump --uri "$MONGODB_URI" --db careerforge_application --collection cover_letter_versions --out ./backup-adr033
+mongodump --uri "$MONGODB_URI" --db careerforge_assessment --collection ats_assessments        --out ./backup-adr033
+
+# 2. Verify the dump restores into a scratch database before deleting anything.
+
+# 3. Then, and only then:
+#    careerforge_resume and careerforge_document can be dropped whole (no live collections).
+#    In the other two, drop only the named collections — the databases are still in use.
+mongosh "$MONGODB_URI" --eval 'db.getSiblingDB("careerforge_application").cover_letter_versions.drop()'
+mongosh "$MONGODB_URI" --eval 'db.getSiblingDB("careerforge_assessment").ats_assessments.drop()'
+```
+
+`MONGODB_DB_RESUME` and `MONGODB_DB_DOCUMENT` can be removed from `.env`/`.env.example` at the
+same time.

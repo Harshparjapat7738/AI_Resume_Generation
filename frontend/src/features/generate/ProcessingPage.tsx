@@ -1,66 +1,43 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { Button } from '@/components/ui/Button';
-import { ErrorBanner } from '@/components/ui/ErrorBanner';
-import {
-  attachResume,
-  createApplication,
-  generateCoverLetter,
-  generateEmail,
-  recordOutputFailure,
-} from '@/services/applicationApi';
-import { assessResume } from '@/services/assessmentApi';
-import { generateResume } from '@/services/resumeApi';
+import { createApplication, generateEmail } from '@/services/applicationApi';
+import { optimizeForJd } from '@/services/jdApi';
+import { ContentGenerationFailure } from './components/ContentGenerationFailure';
+import { stepsForGenerationType } from './components/GenerationProgress';
 import { GenerateLayout } from './GenerateLayout';
 
 /**
- * generateResume + assessResume are two synchronous backend calls (three Groq requests
- * inside the first — see ARCHITECTURE_DECISIONS.md ADR-013 — plus deterministic Java
- * scoring for the second, no LLM involved). There's no real per-stage progress signal from
- * either, so this is an honest indeterminate wait, not a fake staged checklist.
+ * Runs the one backend call the chosen output needs, then redirects to its result page.
  *
- * `templateId` travels here as a query param (set by TemplatePage) rather than component
- * state, so it survives a reload of this page — resume-service persists it on the generation
- * and every derived resume version (ARCHITECTURE_DECISIONS.md ADR-016).
+ * <p>Two flows remain (ADR-033): JD optimization (`POST /api/jd/{id}/optimize`, one Groq call
+ * inside) and application email (create the `Application`, then generate its content). Neither
+ * picks a template, so this page no longer has a template step before it.
  *
- * `type=EMAIL_ONLY` / `type=COVER_LETTER_ONLY` (set by OutputTypePage, carried the same way)
- * each take an entirely separate path: create the `Application` aggregate, then generate the
- * corresponding artifact — see ARCHITECTURE_DECISIONS.md ADR-019 (email) / ADR-020 (cover
- * letter). The `RESUME_ONLY` path below is otherwise unchanged.
- *
- * `type=ALL` ("Generate All") creates one `Application` and generates all three outputs
- * against that same `applicationId` — resume (via resume-service, then attached), cover
- * letter and email (both via application-service, already `ALL`-aware). Each step is wrapped
- * independently: one failing is recorded on the application (`recordOutputFailure`) and does
- * not stop the other two from being attempted, and this page still navigates to the combined
- * result page afterward — that page is what shows "Resume ✓ | Cover Letter ✓ | Email ✕" and
- * offers a per-output retry, reading persisted state that survives a refresh. The three run
- * sequentially, not in parallel: `Application` uses optimistic locking (`@Version`), and each
- * step reads-modifies-saves the same document, so concurrent saves would race.
+ * <p>There's no per-stage progress signal from either call, so the optimization checklist marks
+ * the JD and profile as already done — they genuinely are, resolved in earlier steps — and shows
+ * only the AI call as in flight. Nothing here fakes a timeline.
  */
 export function ProcessingPage() {
   const { jdId = '' } = useParams<{ jdId: string }>();
   const [searchParams] = useSearchParams();
-  const templateId = searchParams.get('templateId');
   const generationType = searchParams.get('type') ?? 'RESUME_ONLY';
   const isEmailOnly = generationType === 'EMAIL_ONLY';
-  const isCoverLetterOnly = generationType === 'COVER_LETTER_ONLY';
-  const isAll = generationType === 'ALL';
-  const skipsTemplate = isEmailOnly || isCoverLetterOnly;
+  const isOptimization = !isEmailOnly;
   const navigate = useNavigate();
   const startedRef = useRef(false);
   const [error, setError] = useState<unknown>(null);
   const [pending, setPending] = useState(false);
+  // Real stages, not a fake timeline: the JD and profile are genuinely resolved server-side
+  // before the single AI call, so by the time this page is running both are already done and
+  // the only step still in flight is the optimization itself.
+  const [optimizeStage, setOptimizeStage] = useState<'idle' | 'running'>('idle');
 
-  const runResume = async () => {
-    const resume = await generateResume(jdId, templateId ?? undefined);
-    try {
-      await assessResume(resume.id);
-    } catch {
-      // Assessment is a real backend call but non-fatal to this flow — the result page
-      // shows the resume regardless and offers to retry scoring if it's missing.
-    }
-    navigate(`/results/${resume.id}`, { replace: true });
+
+  const runOptimization = async () => {
+    setOptimizeStage('running');
+    const result = await optimizeForJd(jdId);
+    navigate(`/results/optimization/${result.jobDescriptionId}`, { replace: true });
   };
 
   const runEmail = async () => {
@@ -69,55 +46,13 @@ export function ProcessingPage() {
     navigate(`/results/email/${application.id}`, { replace: true });
   };
 
-  const runCoverLetter = async () => {
-    const application = await createApplication(jdId, 'COVER_LETTER_ONLY');
-    await generateCoverLetter(application.id);
-    navigate(`/results/cover-letter/${application.id}`, { replace: true });
-  };
 
-  const runAll = async () => {
-    // A failure creating the Application itself is a hard stop (same as every other type) —
-    // there is nothing to attach a per-output failure to yet.
-    const application = await createApplication(jdId, 'ALL', templateId ?? undefined);
-
-    try {
-      const resume = await generateResume(jdId, templateId ?? undefined);
-      await attachResume(application.id, resume.id);
-      try {
-        await assessResume(resume.id);
-      } catch {
-        // Non-fatal, same as the RESUME_ONLY path above.
-      }
-    } catch (err) {
-      await recordOutputFailure(application.id, 'resume', messageOf(err)).catch(() => {
-        // Best-effort: if even recording the failure fails (e.g. the network just died),
-        // the result page's own fetch will simply show this output as not-yet-generated
-        // rather than failed — never throw a second error over the first.
-      });
-    }
-
-    try {
-      await generateCoverLetter(application.id);
-    } catch (err) {
-      await recordOutputFailure(application.id, 'coverLetter', messageOf(err)).catch(() => {});
-    }
-
-    try {
-      await generateEmail(application.id);
-    } catch (err) {
-      await recordOutputFailure(application.id, 'email', messageOf(err)).catch(() => {});
-    }
-
-    // Always land on the combined result page, whatever the mix of success/failure above —
-    // it's the one place that shows exactly which output failed and offers a retry.
-    navigate(`/results/all/${application.id}`, { replace: true });
-  };
 
   const run = async () => {
     setError(null);
     setPending(true);
     try {
-      await (isEmailOnly ? runEmail() : isCoverLetterOnly ? runCoverLetter() : isAll ? runAll() : runResume());
+      await (isEmailOnly ? runEmail() : runOptimization());
     } catch (err) {
       setError(err);
     } finally {
@@ -127,35 +62,33 @@ export function ProcessingPage() {
 
   useEffect(() => {
     if (startedRef.current || !jdId) return;
-    if (!skipsTemplate && !templateId) {
-      // No template was selected — send the user back rather than silently generating with
-      // whatever the backend defaults to. Email/cover-letter generation has no template step
-      // to return to.
-      navigate(`/generate/template/${jdId}${isAll ? '?type=ALL' : ''}`, { replace: true });
-      return;
-    }
     startedRef.current = true;
     run();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [jdId, templateId, isEmailOnly, isCoverLetterOnly, isAll]);
+  }, [jdId, isEmailOnly]);
+
+
+  const outputLabel = isOptimization
+    ? 'JD optimization'
+    : 'email';
 
   return (
     <GenerateLayout
       activeStep={3}
-      title={
-        isEmailOnly
-          ? 'Generating your email'
-          : isCoverLetterOnly
-            ? 'Generating your cover letter'
-            : isAll
-              ? 'Generating your application'
-              : 'Generating your resume'
-      }
+      steps={stepsForGenerationType(generationType)}
+      title={isOptimization ? 'Generating Your JD Optimization' : 'Generating Your Email'}
       subtitle="Grounded in your evidence only — nothing here is invented."
     >
       {error !== null ? (
         <div className="space-y-4">
-          <ErrorBanner error={error} />
+          {(
+            // Every failure reachable here is a *content*-generation failure: this page only
+            // ever calls the content endpoints, and each of them persists nothing unless both
+            // AI stages succeeded. So there is never validated content to fall back to at this
+            // point — the document-generation fallback (which does hand over the finished JSON)
+            // lives on the result pages, where rendering is actually attempted.
+            <ContentGenerationFailure error={error} outputLabel={outputLabel} />
+          )}
           <div className="flex gap-3">
             <Button onClick={run} loading={pending}>
               Try again
@@ -174,16 +107,20 @@ export function ProcessingPage() {
             className="h-10 w-10 animate-spin rounded-full border-2 border-ember-soft border-t-transparent"
             aria-hidden="true"
           />
+          {isOptimization && (
+            <ul className="mb-2 space-y-1.5 text-sm">
+              <li className="text-mint"><span aria-hidden="true">✓ </span>Job description analyzed</li>
+              <li className="text-mint"><span aria-hidden="true">✓ </span>Verified profile loaded</li>
+              <li className="text-ember-soft">
+                <span aria-hidden="true">● </span>
+                {optimizeStage === 'running' ? 'Building JD optimization…' : 'Building JD optimization'}
+              </li>
+            </ul>
+          )}
           <p className="text-sm text-ink-muted">
-            {isEmailOnly
-              ? 'Writing a grounded application email from your evidence. This usually takes a few seconds.'
-              : isCoverLetterOnly
-                ? "Matching your evidence to this job's requirements and writing a grounded cover letter. This usually takes a few seconds."
-                : isAll
-                  ? 'Generating your resume, cover letter and email one after another, then running ATS and ' +
-                    "job-fit analysis. This usually takes 20–40 seconds — a single output failing won't stop the others."
-                  : "Matching your evidence to this job's requirements, writing grounded content, then " +
-                    'running ATS and job-fit analysis. This usually takes 10–20 seconds.'}
+            {isOptimization
+              ? 'Matching your verified evidence to this job’s requirements and identifying keywords and gaps. This usually takes 10–20 seconds.'
+              : 'Writing a grounded application email from your evidence. This usually takes a few seconds.'}
           </p>
         </div>
       )}
@@ -191,6 +128,3 @@ export function ProcessingPage() {
   );
 }
 
-function messageOf(err: unknown): string {
-  return err instanceof Error && err.message ? err.message : 'Generation failed.';
-}

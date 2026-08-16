@@ -63,3 +63,20 @@ export function GridIcon({ className }: IconProps) {
     </svg>
   );
 }
+
+export function SunIcon({ className }: IconProps) {
+  return (
+    <svg {...base} className={className}>
+      <circle cx="12" cy="12" r="4" />
+      <path d="M12 2.75v2.5M12 18.75v2.5M4.85 4.85l1.77 1.77M17.38 17.38l1.77 1.77M2.75 12h2.5M18.75 12h2.5M4.85 19.15l1.77-1.77M17.38 6.62l1.77-1.77" />
+    </svg>
+  );
+}
+
+export function MoonIcon({ className }: IconProps) {
+  return (
+    <svg {...base} className={className}>
+      <path d="M20.5 14.2A8.5 8.5 0 1 1 9.8 3.5a7 7 0 0 0 10.7 10.7Z" />
+    </svg>
+  );
+}

@@ -39,48 +39,35 @@ public final class AiRequests {
     }
 
     /**
-     * @param selectedEvidenceIds ids chosen in the evidence-selection stage
-     * @param evidence            the full inventory, so grounding can resolve every citation
+     * The JD-optimization stage (ADR-033) — the operation that replaced resume and cover-letter
+     * content generation. Takes the same two inputs the removed pipeline took (a confirmed
+     * posting's requirements and the candidate's full evidence inventory), plus the keywords the
+     * JD analysis already extracted, and returns targeting data rather than prose.
+     *
+     * @param requirements requirements from a CONFIRMED job description
+     * @param keywords     vocabulary already extracted by the JD analysis; optional
+     * @param evidence     the candidate's complete evidence inventory — the only source of
+     *                     candidate facts this operation has
      */
-    public record ResumeContentRequest(
-            @NotBlank @Size(max = 200) String jobTitle,
-            @Size(max = 100) String seniority,
-            @NotEmpty @Valid List<RequirementInput> requirements,
-            @NotEmpty List<String> selectedEvidenceIds,
-            @NotEmpty @Valid List<EvidenceItem> evidence,
-            Integer promptVersion) {
-    }
-
-    /**
-     * @param jobTitle            the confirmed target role
-     * @param company             the confirmed target company, when known — nullable, since
-     *                            not every job description names one; both this and jobTitle
-     *                            are allowed to appear in the generated text without an
-     *                            evidence citation (see {@code GroundingValidator#validate}
-     *                            3-arg overload); everything else still requires one
-     * @param selectedEvidenceIds ids chosen in the evidence-selection stage
-     * @param evidence            the full inventory, so grounding can resolve every citation
-     */
-    public record CoverLetterContentRequest(
-            @NotBlank @Size(max = 200) String jobTitle,
+    public record JdOptimizationRequest(
+            @Size(max = 200) String jobTitle,
             @Size(max = 200) String company,
-            @Size(max = 100) String seniority,
+            @Size(max = 60) String seniority,
             @NotEmpty @Valid List<RequirementInput> requirements,
-            @NotEmpty List<String> selectedEvidenceIds,
+            List<@Size(max = 100) String> keywords,
             @NotEmpty @Valid List<EvidenceItem> evidence,
             Integer promptVersion) {
     }
 
     /**
      * @param jobTitle the confirmed target role — allowed as context without an evidence
-     *                 citation, same as {@link CoverLetterContentRequest} (see
-     *                 {@code GroundingValidator#validate} 3-arg overload)
+     *                 citation (see {@code GroundingValidator#validate}'s 3-arg overload)
      * @param company  the confirmed target company, when known — same caveat; nullable,
      *                 since not every job description yields a company name
      * @param evidence the candidate's complete evidence inventory. Email generation is
      *                 single-shot — there is no separate evidence-selection stage; the model
      *                 picks directly from the full inventory, appropriate for one short
-     *                 paragraph rather than a full resume or letter
+     *                 paragraph
      */
     public record EmailContentRequest(
             @NotBlank @Size(max = 200) String jobTitle,

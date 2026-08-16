@@ -5,8 +5,7 @@ import { test, expect } from '@playwright/test';
  * redesigned to represent Applications rather than only resume history). Runs against the
  * real backend — no mocking. Covers: an EMAIL_ONLY application appearing with its Company/Job
  * Title/Generation Type/Status/Created Date, the type and status filters, navigation to
- * `/applications/:id`, and that the legacy resume-history section still lists a plain
- * RESUME_ONLY generation (which has no Application record).
+ * `/applications/:id`.
  */
 
 async function registerAndCompleteMinimalProfile(page: import('@playwright/test').Page, name: string) {
@@ -107,8 +106,6 @@ test('dashboard type and status filters narrow the list', async ({ page }) => {
   await expect(page.getByText('Oscorp')).toHaveCount(0);
 });
 
-test('legacy resume-history section still lists a plain resume generation', async ({ page }) => {
-  await registerAndCompleteMinimalProfile(page, 'e2e-dash-legacy');
 
   await page.getByRole('link', { name: 'Generate' }).first().click();
   await page.waitForURL('**/generate');

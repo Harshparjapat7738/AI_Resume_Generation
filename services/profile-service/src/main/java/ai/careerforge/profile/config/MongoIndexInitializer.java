@@ -25,6 +25,13 @@ public class MongoIndexInitializer implements ApplicationRunner {
     public void run(ApplicationArguments args) {
         mongoTemplate.indexOps("profiles")
                 .ensureIndex(new Index().on("userId", Sort.Direction.ASC).unique());
+        // Many templates per user (unlike the one-per-user "profiles" index above) — supports
+        // both the list-by-owner query and the duplicate-upload (userId+sha256) check without a
+        // collection scan (ADR-034).
+        mongoTemplate.indexOps("templates")
+                .ensureIndex(new Index().on("userId", Sort.Direction.ASC).on("createdAt", Sort.Direction.DESC));
+        mongoTemplate.indexOps("templates")
+                .ensureIndex(new Index().on("userId", Sort.Direction.ASC).on("sha256", Sort.Direction.ASC));
         log.info("profile-service Mongo indexes ensured");
     }
 }

@@ -9,13 +9,10 @@ in `.env` (gitignored) locally and in a secrets manager in production.
 | Service | Used by | Required for | Credential reaches the browser? |
 |---|---|---|---|
 | MongoDB Atlas | all data-owning services | everything | **Never** |
-| Redis | gateway, auth, jd, resume, ai, document, notification | rate limiting, cache, job queues | **Never** |
-| Groq | ai-service only | JD analysis, resume/cover-letter generation | **Never** |
+| Redis | gateway, auth, jd, ai | rate limiting, cache | **Never** |
+| Groq | ai-service only | JD analysis, evidence selection, JD optimization, email content | **Never** |
 | Google OAuth | auth-service only | Google sign-in | Client ID only |
-| MinIO | document-service (dev) | artifact storage | **Never** |
-| Amazon S3 | document-service (prod) | artifact storage | **Never** |
 | Gmail API | application-service | creating drafts | Client ID only |
-| SMTP | notification-service | transactional email | **Never** |
 
 ---
 
@@ -31,14 +28,12 @@ MONGODB_URI=
 MONGODB_DB_AUTH=careerforge_auth
 MONGODB_DB_PROFILE=careerforge_profile
 MONGODB_DB_JD=careerforge_jd
-MONGODB_DB_RESUME=careerforge_resume
 MONGODB_DB_ASSESSMENT=careerforge_assessment
-MONGODB_DB_DOCUMENT=careerforge_document
 MONGODB_DB_APPLICATION=careerforge_application
 ```
 
-**Used by** auth · profile · jd · resume · assessment · document · application services.
-`ai-service` and `notification-service` use no database (ADR-002).
+**Used by** auth · profile · jd · assessment · application services.
+`ai-service` uses no database (ADR-002).
 
 **Required** Yes.
 
@@ -82,8 +77,7 @@ REDIS_PORT=6379
 REDIS_PASSWORD=
 ```
 
-**Used by** api-gateway · auth-service · jd-service · resume-service · ai-service ·
-document-service · notification-service.
+**Used by** api-gateway · auth-service · jd-service · ai-service.
 
 **Required** Yes.
 
@@ -102,15 +96,16 @@ Redis beyond the lifetime of the job that needs them.
 ## Groq
 
 **Purpose**
-The only LLM provider. Performs semantic JD analysis, evidence selection, and resume and
-cover-letter content generation.
+The only LLM provider ([ADR-033](ARCHITECTURE_DECISIONS.md#adr-033)) — JD analysis, evidence
+selection, JD optimization and email content generation all depend on Groq being reachable.
+Gemini was removed entirely.
 
 **Environment variables**
 
 ```env
 GROQ_API_KEY=
 GROQ_BASE_URL=https://api.groq.com/openai/v1
-GROQ_MODEL=llama-3.3-70b-versatile
+GROQ_MODEL=openai/gpt-oss-120b
 GROQ_TIMEOUT_SECONDS=60
 GROQ_MAX_OUTPUT_TOKENS=4096
 ```
@@ -118,7 +113,8 @@ GROQ_MAX_OUTPUT_TOKENS=4096
 **Used by** `ai-service` **only**. No other service may declare `GROQ_API_KEY` (blueprint
 §37, ADR-012).
 
-**Required** Yes — the product's core feature does not function without it.
+**Required** Yes — `ai-service` fails to start without it (`GroqProperties` hard-fails on a
+blank key); the product's core feature does not function without it.
 
 **Setup**
 
@@ -134,7 +130,8 @@ Groq enforces per-model requests-per-minute, tokens-per-minute and requests-per-
 that vary by tier. `ai-service` therefore:
 
 - applies Resilience4j rate limiting and a circuit breaker around the client;
-- retries `429` and `5xx` with exponential backoff and jitter, at most twice;
+- retries `429` and `5xx` with exponential backoff and jitter, at most twice
+  (`GROQ_MAX_RETRIES`, default 2 — never retried for a 4xx it caused);
 - returns `AI_GENERATION_FAILED` after exhausting retries rather than hanging the request;
 - records token usage per generation so cost and quota are observable in Grafana.
 
@@ -211,8 +208,9 @@ Browser → GET /api/auth/oauth2/authorize/google      (auth-service creates sta
 ## MinIO (development object storage)
 
 **Purpose**
-S3-compatible private storage for rendered PDFs/DOCX, thumbnails and quarantined uploads
-during development.
+S3-compatible private storage for user-uploaded "My Templates" files (ADR-034) — the one
+remaining consumer of this bucket since the document-rendering pipeline that originally
+justified it (`document-service`) was removed by ADR-033.
 
 **Environment variables**
 
@@ -221,17 +219,17 @@ S3_ENDPOINT=http://minio:9000
 S3_REGION=us-east-1
 S3_ACCESS_KEY=
 S3_SECRET_KEY=
-S3_BUCKET=careerforge-documents
-S3_PRESIGNED_URL_TTL_SECONDS=300
+S3_BUCKET=careerforge-templates
 S3_PATH_STYLE_ACCESS=true
 
 MINIO_ROOT_USER=
 MINIO_ROOT_PASSWORD=
 ```
 
-**Used by** `document-service`.
+**Used by** `profile-service` only.
 
-**Required** Yes in development.
+**Required** Yes in development — profile-service will not start without a reachable MinIO
+endpoint (`careerforge.storage.*`, application.yml).
 
 **Setup**
 `docker compose up -d` starts MinIO and the `minio-init` job, which creates the bucket and
@@ -241,9 +239,11 @@ Set `S3_ACCESS_KEY`/`S3_SECRET_KEY` to the same values as `MINIO_ROOT_USER`/
 credentials.
 
 **Security**
-The bucket is private and must stay private. Objects use random UUID keys, are never
-served from a static directory, and are reachable only through a presigned URL issued
-after an ownership check.
+The bucket is private and must stay private. Objects use random UUID keys — never a
+filename, user id or anything else guessable — are never served from a static directory,
+and have no public or presigned URL of any kind: every download streams the bytes through
+`TemplateController`'s own ownership-checked endpoint (`GET /api/profile/templates/{id}/download`),
+`404` for a template that exists but belongs to someone else.
 
 ---
 
@@ -256,7 +256,7 @@ Production artifact storage. Same code path as MinIO — only configuration diff
 `S3_ENDPOINT=https://s3.<region>.amazonaws.com`, `S3_PATH_STYLE_ACCESS=false`, and prefer
 an IAM role over static keys.
 
-**Used by** `document-service`.
+**Used by** `profile-service` only.
 
 **Setup**
 
@@ -264,13 +264,12 @@ an IAM role over static keys.
 2. Enable default encryption (SSE-S3 or SSE-KMS) and versioning.
 3. Create an IAM policy granting `s3:PutObject`, `s3:GetObject` and `s3:DeleteObject` on
    `arn:aws:s3:::<bucket>/*` and nothing else. Attach it to the service's role.
-4. Add a lifecycle rule deleting `quarantine/` objects after 24 hours.
-5. Enable access logging and, where required, Object Lock for audit retention.
+4. Enable access logging.
 
 **Security**
-Never make the bucket or any object public. Never return raw bytes through the service —
-issue a presigned URL, valid for `S3_PRESIGNED_URL_TTL_SECONDS` (300), and only after the
-requester is confirmed to be the owner.
+Never make the bucket or any object public. Never issue a public or presigned URL for a
+template file — every download goes through `profile-service`'s own ownership-checked
+endpoint, exactly as in development.
 
 ---
 
@@ -313,38 +312,6 @@ inexpensive; the client backs off on `429`/`403 rateLimitExceeded`.
   key held outside MongoDB, never log it, and delete it on disconnect.
 - Provide an explicit "Disconnect Gmail" action that deletes the stored token and calls
   Google's revocation endpoint.
-
----
-
-## SMTP (transactional email)
-
-**Purpose**
-Platform email only: address verification, password reset, security alerts. Never job
-applications.
-
-**Environment variables**
-
-```env
-SMTP_HOST=
-SMTP_PORT=587
-SMTP_USERNAME=
-SMTP_PASSWORD=
-SMTP_FROM=no-reply@careerforge.local
-```
-
-**Used by** `notification-service`.
-
-**Required** Yes for email verification and password reset.
-
-**Setup**
-Any provider works (SES, SendGrid, Postmark, Mailgun). Use port 587 with STARTTLS, verify
-the sending domain, and publish SPF, DKIM and DMARC records — without them, verification
-emails land in spam and users cannot complete sign-up.
-
-**Security**
-Credentials stay server-side. Email bodies must not contain resume content, cover-letter
-content, or any JD text. Rate-limit password-reset requests per address to prevent using
-the endpoint as a spam relay.
 
 ---
 

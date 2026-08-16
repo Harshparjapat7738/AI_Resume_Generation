@@ -1,0 +1,171 @@
+{
+  "resumeGeneration": {
+    "entryPoint": "frontend/src/features/generate/TemplatePage.tsx -> POST /api/resumes/generate (ResumeController.generate)",
+    "services": [
+      "resume-service",
+      "jd-service",
+      "profile-service",
+      "ai-service",
+      "document-service"
+    ],
+    "aiProvider": "Groq only - JD Analysis, Evidence Selection and Resume Content all call GroqClient directly (ADR-032, reverting ADR-026/027/030's Gemini-primary/Groq-fallback routing); Gemini is unreachable from this pipeline",
+    "aiModel": "openai/gpt-oss-120b (env: GROQ_MODEL, default value)",
+    "templateService": "resume-service (ai.careerforge.resume.service.TemplateService) - catalogue/selection/ownership; document-service (ai.careerforge.document.template.ResumeTemplate) - built-in renderable templates",
+    "documentService": "document-service (ai.careerforge.document.service.DocumentRenderService)",
+    "outputFormats": [
+      "PDF",
+      "DOCX"
+    ]
+  },
+  "coverLetterGeneration": {
+    "entryPoint": "frontend/src/features/generate/ProcessingPage.tsx -> POST /api/applications then POST /api/applications/{id}/cover-letter (ApplicationController.generateCoverLetter)",
+    "services": [
+      "application-service",
+      "jd-service",
+      "profile-service",
+      "ai-service",
+      "document-service"
+    ],
+    "aiProvider": "Groq only (ADR-032, reverting ADR-028's Gemini-primary/Groq-fallback routing)",
+    "aiModel": "openai/gpt-oss-120b (env: GROQ_MODEL, default value)",
+    "templateService": "resume-service's catalogue is reused (same 3 built-in ids); document-service (ai.careerforge.document.template.CoverLetterTemplate) - built-in renderable cover-letter templates, ADR-028",
+    "documentService": "document-service (ai.careerforge.document.service.DocumentRenderService#renderCoverLetterPdf, ADR-028) - built-in PDF via Thymeleaf/openhtmltopdf, or custom-template DOCX/PDF via docx4j/PDFBox mail-merge (CustomTemplateAssetService#generateForCoverLetter)",
+    "outputFormats": [
+      "PDF",
+      "DOCX"
+    ]
+  },
+  "geminiRoutedOperations": {
+    "note": "REVERTED (ADR-032). JD Analysis (ADR-026), Evidence Selection (ADR-027), Cover Letter Content (ADR-028) and Resume Content (ADR-030) were briefly routed Gemini-primary/Groq-fallback via AiProviderRouter; that router and the AiOperation enum keying it were both deleted, and all four services now call GroqClient directly, exactly like Email Content always did. Gemini is unreachable from every JSON/content-generation operation today - see aiProviders below. Gemini-assisted PDF template layout analysis (ADR-029) is unaffected: a separate, non-content-generation capability, never part of this router, GeminiClient called directly.",
+    "routed": [],
+    "primaryProvider": null,
+    "fallbackProvider": null,
+    "routerClass": null,
+    "unaffected": "every AI generation operation (JD Analysis, Evidence Selection, Resume Content, Cover Letter Content, Email Content) calls GroqClient directly - none are routed to Gemini"
+  },
+  "aiProviders": [
+    {
+      "name": "Groq",
+      "status": "active - the sole provider for every JSON/content-generation operation (JD Analysis, Evidence Selection, Resume Content, Cover Letter Content, Email Content); no longer @Primary since it is the only AiChatClient implementation left (ADR-032)",
+      "apiStyle": "OpenAI-compatible Chat Completions API",
+      "endpoint": "POST {GROQ_BASE_URL}/chat/completions",
+      "clientClass": "ai.careerforge.ai.client.GroqClient",
+      "configClass": "ai.careerforge.ai.config.GroqProperties",
+      "internalEndpoints": [
+        "POST /internal/ai/jd-analysis",
+        "POST /internal/ai/evidence-selection",
+        "POST /internal/ai/resume-content",
+        "POST /internal/ai/cover-letter",
+        "POST /internal/ai/email-content",
+        "GET /internal/ai/status"
+      ],
+      "responseFormat": "json_object (schema-validated against JSON Schema files per operation)",
+      "retryPolicy": "exponential backoff, max 2 retries (env GROQ_MAX_RETRIES), only on HTTP 429 or 5xx",
+      "envVars": [
+        "GROQ_API_KEY",
+        "GROQ_BASE_URL",
+        "GROQ_MODEL",
+        "GROQ_TIMEOUT_SECONDS",
+        "GROQ_MAX_OUTPUT_TOKENS",
+        "GROQ_TEMPERATURE",
+        "GROQ_MAX_RETRIES"
+      ]
+    },
+    {
+      "name": "Gemini",
+      "status": "active - but ONLY for Gemini-assisted PDF template layout analysis (ADR-029), used solely by document-service via ai-service. Does NOT implement AiChatClient and is unreachable from JD Analysis, Evidence Selection, Resume Content, Cover Letter Content or Email Content (ADR-032 reverted its brief stint as a routed provider for those, ADR-026/027/028/030).",
+      "apiStyle": "Google Gen AI Java SDK (com.google.genai:google-genai 1.66.0), Gemini Developer API mode (API key only, not Vertex AI)",
+      "sdk": "com.google.genai:google-genai",
+      "clientClass": "ai.careerforge.ai.client.GeminiClient",
+      "configClass": "ai.careerforge.ai.config.GeminiProperties",
+      "internalEndpoints": [
+        "POST /internal/ai/pdf-template-analysis (multimodal - PDF bytes + text instruction, ADR-029, the only endpoint that reaches Gemini)"
+      ],
+      "responseFormat": "responseMimeType=application/json, plus responseJsonSchema when a matching schemas/<operation>.schema.json classpath resource exists (falls back to unconstrained JSON mode otherwise) - still independently re-validated by AiGenerationSupport/SchemaValidator after the call returns",
+      "retryPolicy": "manual exponential backoff (2s-20s, ~40% jitter), max 2 retries (env GEMINI_MAX_RETRIES), only on HTTP 429 or 5xx / GenAiIOException; no fallback provider - a failure surfaces directly to PdfTemplateAnalysisService's caller",
+      "beanSelection": "unconditional @Component, does not implement AiChatClient (ADR-032) - reached only by PdfTemplateAnalysisService, which depends on the concrete GeminiClient class directly",
+      "envVars": [
+        "GEMINI_API_KEY",
+        "GEMINI_MODEL",
+        "GEMINI_TIMEOUT_SECONDS",
+        "GEMINI_MAX_OUTPUT_TOKENS",
+        "GEMINI_TEMPERATURE",
+        "GEMINI_MAX_RETRIES"
+      ]
+    }
+  ],
+  "documentGenerators": [
+    {
+      "path": "Built-in template -> PDF (Resume or, since ADR-028, Cover Letter)",
+      "libraries": [
+        "Thymeleaf",
+        "jsoup",
+        "openhtmltopdf"
+      ],
+      "class": "ai.careerforge.document.render.PdfRenderer (render() for resumes, renderCoverLetter() for cover letters, ADR-028)"
+    },
+    {
+      "path": "Custom DOCX template -> DOCX (mail-merge; Resume or, since ADR-028, Cover Letter)",
+      "libraries": [
+        "docx4j"
+      ],
+      "class": "ai.careerforge.document.docx.DocxMailMerge (format-agnostic; content source selected by CustomTemplateAssetService.generate() vs generateForCoverLetter())"
+    },
+    {
+      "path": "Custom PDF template -> PDF (mail-merge; Resume or, since ADR-028, Cover Letter)",
+      "libraries": [
+        "Apache PDFBox"
+      ],
+      "class": "ai.careerforge.document.pdf.PdfMailMerge (format-agnostic; content source selected the same way)"
+    },
+    {
+      "path": "Custom PDF template with no detectable {{token}} placeholders -> Gemini-assisted layout analysis (ai-service, ADR-029) -> validated field coordinates -> same deterministic PDFBox mail-merge",
+      "libraries": [
+        "Apache PDFBox",
+        "Gemini Developer API (layout analysis only - never renders bytes)"
+      ],
+      "class": "ai.careerforge.document.service.CustomTemplateAssetService.analyzePdf()/attemptGeminiAssistedAnalysis() -> ai.careerforge.document.pdf.GeminiPdfFieldConverter (untrusted-input validation) -> ai.careerforge.document.pdf.PdfMailMerge.mergeAtKnownLocations()"
+    }
+  ],
+  "templateSystem": {
+    "builtInTemplateCount": 3,
+    "catalogueOwner": "resume-service (ai.careerforge.resume.domain.Template, TemplateRepository, TemplateSeeder)",
+    "renderableDefinitionOwner": "document-service (ai.careerforge.document.template.ResumeTemplate for resumes, ai.careerforge.document.template.CoverLetterTemplate for cover letters - ADR-028, same 3 ids)",
+    "selectionEndpoint": "GET /api/resumes/templates",
+    "renderEndpoint": "POST /api/documents/resume-versions/{resumeVersionId}/render (resume), POST /api/documents/cover-letter-versions/{coverLetterVersionId}/render (cover letter, ADR-028)",
+    "previewEndpoint": "GET /api/documents/templates/{templateId}/preview",
+    "defaultTemplateId": "classic",
+    "coversResumeOnly": false,
+    "coversCoverLetter": true,
+    "note": "ADR-028: cover letters reuse the same 3 built-in template ids (classic/modern-ats/professional), rendered against a cover-letter-shaped Thymeleaf asset instead of a resume-shaped one; no separate cover-letter catalogue was introduced"
+  },
+  "customTemplateSystem": {
+    "uploadEntry": "resume-service TemplateService.uploadCustom() -> Feign -> document-service CustomTemplateAssetController.store()",
+    "storeEndpoint": "POST /api/documents/custom-templates",
+    "duplicateEndpoint": "POST /api/documents/custom-templates/{id}/duplicate",
+    "deleteEndpoint": "DELETE /api/documents/custom-templates/{id}",
+    "generateEndpoint": "POST /api/documents/custom-templates/{id}/generate",
+    "structureAnalyzers": [
+      "ai.careerforge.document.docx.DocxStructureAnalyzer",
+      "ai.careerforge.document.pdf.PdfStructureAnalyzer"
+    ],
+    "placeholderSyntax": "{{TOKEN}}",
+    "fieldMappingShape": "flat Map<String,String> (one token maps to one scalar profile field); no confirmed support for repeating/list-shaped placeholders",
+    "supportedUploadFormats": [
+      "DOCX",
+      "PDF"
+    ],
+    "zeroPlaceholderUploadsAccepted": true,
+    "rejectionReason": "only a file whose text cannot be extracted at all (e.g. a scanned-image PDF with no selectable text layer, or a password-protected PDF) is rejected",
+    "maxUploadSizeBytes": 5242880,
+    "geminiAssistedPdfAnalysis": {
+      "adr": "ADR-029",
+      "trigger": "a custom PDF upload whose deterministic PdfStructureAnalyzer scan finds zero {{token}} fields",
+      "endpoint": "document-service AiServiceClient (Feign) -> ai-service POST /internal/ai/pdf-template-analysis",
+      "validation": "ai.careerforge.document.pdf.GeminiPdfFieldConverter checks every field token pattern, page number (against the real page count) and all four fractional coordinates (against the real page width/height) before converting fraction -> absolute PDF points; any field failing validation is dropped individually, never the whole analysis",
+      "persistedMarker": "CustomTemplateAsset.analysisSource: DETERMINISTIC | GEMINI_ASSISTED",
+      "renderingDispatch": "CustomTemplateAssetService.mergePdf() calls PdfMailMerge.mergeAtKnownLocations() for GEMINI_ASSISTED assets (trusts stored coordinates directly) vs the existing PdfMailMerge.merge() for DETERMINISTIC assets (re-scans the live document's text for literal placeholder tokens) - Gemini never produces PDF bytes",
+      "failureHandling": "Gemini unreachable, erroring, or every proposed field failing validation all fall back to the same already-accepted DETERMINISTIC/empty-field-list outcome a template with genuinely nothing detectable already has - never a rejected upload"
+    }
+  }
+}

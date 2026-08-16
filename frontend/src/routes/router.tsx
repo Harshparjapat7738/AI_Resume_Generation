@@ -53,6 +53,13 @@ export const router = createBrowserRouter([
         },
       },
       {
+        path: '/profile/templates',
+        lazy: async () => {
+          const { MyTemplatesPage } = await import('../features/profile/MyTemplatesPage');
+          return { Component: MyTemplatesPage };
+        },
+      },
+      {
         path: '/dashboard',
         lazy: async () => {
           const { DashboardPage } = await import('../features/dashboard/DashboardPage');
@@ -67,31 +74,10 @@ export const router = createBrowserRouter([
         },
       },
       {
-        path: '/resumes',
-        lazy: async () => {
-          const { ResumesPage } = await import('../features/resumes/ResumesPage');
-          return { Component: ResumesPage };
-        },
-      },
-      {
-        path: '/cover-letters',
-        lazy: async () => {
-          const { CoverLettersPage } = await import('../features/cover-letters/CoverLettersPage');
-          return { Component: CoverLettersPage };
-        },
-      },
-      {
         path: '/emails',
         lazy: async () => {
           const { EmailsPage } = await import('../features/emails/EmailsPage');
           return { Component: EmailsPage };
-        },
-      },
-      {
-        path: '/templates',
-        lazy: async () => {
-          const { TemplatesPage } = await import('../features/templates/TemplatesPage');
-          return { Component: TemplatesPage };
         },
       },
       {
@@ -123,13 +109,6 @@ export const router = createBrowserRouter([
         },
       },
       {
-        path: '/generate/template/:jdId',
-        lazy: async () => {
-          const { TemplatePage } = await import('../features/generate/TemplatePage');
-          return { Component: TemplatePage };
-        },
-      },
-      {
         path: '/generate/processing/:jdId',
         lazy: async () => {
           const { ProcessingPage } = await import('../features/generate/ProcessingPage');
@@ -137,10 +116,10 @@ export const router = createBrowserRouter([
         },
       },
       {
-        path: '/results/:resumeId',
+        path: '/results/optimization/:jdId',
         lazy: async () => {
-          const { ResultPage } = await import('../features/results/ResultPage');
-          return { Component: ResultPage };
+          const { OptimizationResultPage } = await import('../features/results/OptimizationResultPage');
+          return { Component: OptimizationResultPage };
         },
       },
       {
@@ -148,20 +127,6 @@ export const router = createBrowserRouter([
         lazy: async () => {
           const { EmailResultPage } = await import('../features/results/EmailResultPage');
           return { Component: EmailResultPage };
-        },
-      },
-      {
-        path: '/results/cover-letter/:applicationId',
-        lazy: async () => {
-          const { CoverLetterResultPage } = await import('../features/results/CoverLetterResultPage');
-          return { Component: CoverLetterResultPage };
-        },
-      },
-      {
-        path: '/results/all/:applicationId',
-        lazy: async () => {
-          const { AllResultPage } = await import('../features/results/AllResultPage');
-          return { Component: AllResultPage };
         },
       },
       {

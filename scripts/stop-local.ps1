@@ -34,7 +34,7 @@ if (Test-Path $pidFile) {
 }
 
 # Fallback: free any CareerForge port still held.
-$ports = 8080, 8081, 8082, 8083, 8084, 8085, 8086, 8087, 8088, 8089, 8761, 8888
+$ports = 8080, 8081, 8082, 8083, 8084, 8085, 8086, 8087, 8088, 8761, 8888
 foreach ($port in $ports) {
     Get-NetTCPConnection -LocalPort $port -State Listen | ForEach-Object {
         Stop-Process -Id $_.OwningProcess -Force

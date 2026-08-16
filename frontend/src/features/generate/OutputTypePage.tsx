@@ -1,26 +1,17 @@
 import { useNavigate } from 'react-router-dom';
-import {
-  DocumentIcon,
-  MailIcon,
-  SendIcon,
-  SparkleIcon,
-} from '@/features/landing/components/icons';
+import { MailIcon, SparkleIcon } from '@/features/landing/components/icons';
 import type { GenerationType } from '@/services/applicationApi';
 import { GenerateLayout } from './GenerateLayout';
 
 const cards = [
   {
-    id: 'RESUME_ONLY' satisfies GenerationType,
-    title: 'Resume',
-    description: 'A job-specific resume, grounded in your real experience.',
-    icon: DocumentIcon,
-    available: true,
-  },
-  {
-    id: 'COVER_LETTER_ONLY' satisfies GenerationType,
-    title: 'Cover Letter',
-    description: 'A personalized cover letter for this role.',
-    icon: SendIcon,
+    // Not a GenerationType: JD optimization is a jd-service concept, not an Application
+    // generation type (ADR-033). Email below still is one, and is untouched.
+    id: 'JD_OPTIMIZATION',
+    title: 'JD Optimization',
+    description:
+      'Structured, JD-optimized data from your verified profile — keywords, matches and gaps you can take to any document tool.',
+    icon: SparkleIcon,
     available: true,
   },
   {
@@ -28,13 +19,6 @@ const cards = [
     title: 'Email Content',
     description: 'Application email subject and body.',
     icon: MailIcon,
-    available: true,
-  },
-  {
-    id: 'ALL' satisfies GenerationType,
-    title: 'Generate All',
-    description: 'Resume, cover letter and email together, in one application.',
-    icon: SparkleIcon,
     available: true,
   },
 ] as const;
@@ -45,8 +29,8 @@ export function OutputTypePage() {
   return (
     <GenerateLayout
       activeStep={0}
-      title="What do you want to generate?"
-      subtitle="Resume, cover letter and email generation are all available today — separately or together."
+      title="What do you want to create?"
+      subtitle="CareerForge analyses your profile against a job description and gives you the data to build your documents — plus grounded application email content."
     >
       <div className="grid gap-4 sm:grid-cols-2">
         {cards.map((card) => {
