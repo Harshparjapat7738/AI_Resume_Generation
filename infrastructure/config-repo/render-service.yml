@@ -1,0 +1,7 @@
+# render-service overrides (ADR-036) — none yet.
+#
+# This file exists to register render-service with config-server explicitly, per this repo's
+# convention (see README.md: "<service-name>.yml — overrides for one service"). render-service's
+# own defaults (port 8084, Eureka, actuator health) live in its application.yml, same as every
+# peer service that also has no override file yet — add keys here only when render-service
+# actually needs a value config-server should own instead.
