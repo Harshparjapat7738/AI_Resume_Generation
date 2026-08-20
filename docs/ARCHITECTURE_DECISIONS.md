@@ -39,9 +39,10 @@ implementation reality required a choice the blueprint did not make.
 | [ADR-030](#adr-030) | Resume Content routed to Gemini (fourth `AiProviderRouter` operation), same Groq-fallback contract; prompt, schema, grounding, regenerate-once-then-strip, and `ResumeVersion` persistence all untouched — only Email Content remains directly on Groq | Superseded by ADR-032 |
 | [ADR-031](#adr-031) | Production-hardening pass over the Gemini/Groq architecture: router-level fallback/completion metrics, explicit tests proving grounding/schema failures never trigger provider fallback, and correction of several stale docs/config comments describing already-superseded behaviour — no change to routing, prompts, schemas, or rendering | Superseded by ADR-032 |
 | [ADR-032](#adr-032) | Gemini-primary/Groq-fallback routing reverted platform-wide: Groq is once again the sole provider for every JSON/content-generation operation, `AiProviderRouter`/`AiOperation` deleted, `GeminiClient` trimmed to document/layout analysis only (its one still-`Accepted` use, ADR-029) | Superseded by ADR-033 (Gemini removed outright) |
-| [ADR-033](#adr-033) | Resume and Cover Letter generation removed entirely: CareerForge produces JD-optimization data, not documents. `resume-service`/`document-service` deleted, Gemini removed, assessment re-keyed to the optimization. Email generation unchanged | Accepted |
+| [ADR-033](#adr-033) | Resume and Cover Letter generation removed entirely: CareerForge produces JD-optimization data, not documents. `resume-service`/`document-service` deleted, Gemini removed, assessment re-keyed to the optimization. Email generation unchanged | Partially superseded by ADR-036 (the resume/cover-letter-generation and PDF/DOCX ban only — Gemini removal and deterministic JD-fit scoring remain Accepted) |
 | [ADR-034](#adr-034) | "My Templates": a user-owned library of uploaded Resume/Cover Letter files, living in profile-service (`templates` collection + the MinIO/S3 bucket document-service used to own), selected — never re-uploaded — at JD-optimization handoff time and referenced in the external AI prompt. No structural analysis, mail-merge or AI involvement; `document-service` is not reintroduced | Accepted |
 | [ADR-035](#adr-035) | `notification-service` removed: it never grew past a wired-up bootstrap skeleton (no controller, no domain logic, no Redis Stream consumer was ever implemented) and had zero active callers anywhere in the platform. Candidate-facing email (application-service) is unaffected | Accepted |
+| [ADR-036](#adr-036) | Resume and Cover Letter generation reintroduced across three separated responsibilities: `ai-service` generates grounded content fragments only, `application-service` deterministically assembles the versioned `ResumeDocumentModel`/`CoverLetterDocumentModel` and owns orchestration/persistence, and a new, narrow `render-service` renders that model — and only that model — into a PDF via Thymeleaf + Open HTML to PDF and verifies the artifact. `document-service` is not reintroduced, ADR-034 "My Templates" is untouched, no ATS/outcome score is produced anywhere in the pipeline (deterministic coverage facts only), ATS structural scoring stays deferred to a follow-up ADR | Accepted |
 
 ---
 
@@ -3341,3 +3342,239 @@ a scaffold nobody had touched.
 `platform-common`, down from 10) builds and passes unchanged, since nothing in the reactor
 depended on the removed module. Frontend `npm run typecheck`/`npm run build`/`npm test`
 unaffected — zero frontend references existed before or after.
+
+---
+
+# ADR-036
+
+## Decision
+
+Resume and Cover Letter generation return to CareerForge, but not in the shape ADR-033 deleted, and
+content/rendering are split across **three services with three separated responsibilities**, not two —
+this record was refined before any implementation to state that allocation precisely, rather than
+leaving `ai-service`'s output ambiguous between "grounded content" and "the whole document." The
+allocation mirrors the boundary ADR-019's email generation already proved out in production:
+`EmailGenerationService` calls `ai-service` for grounded prose fragments only (greeting/body/closing
+paragraphs) and assembles the fields that must be exactly right — the subject line, the signature name
+— itself, from data already verified elsewhere, never from the model. Resume/cover-letter generation
+uses the same split, scaled up:
+
+- **`ai-service` only generates structured, grounded content.** Two new operations, Resume Content and
+  Cover Letter Content (Groq only; ADR-032/033's Gemini removal is unaffected), each return grounded
+  prose fragments — a professional-summary paragraph, per-experience/per-project bullet rewrites — in
+  the same `{text, evidenceIds}` shape `GroundingValidator` already validates for email paragraphs.
+  `GroundingValidator` runs over every fragment before it leaves `ai-service`, using the same
+  regenerate-once-then-strip pattern ADR-030 described for the pre-ADR-033 pipeline and email content
+  already uses today — this is **enforced in code, in ai-service**, not a rule stated only in the
+  prompt. `ai-service` never decides section order, never decides what is included or excluded, never
+  states a date, employer name, degree title, certification name or project name (those are copied
+  from profile evidence verbatim, downstream), and — unlike an earlier draft of this record — never
+  assembles or returns a `ResumeDocumentModel`/`CoverLetterDocumentModel` itself.
+- **`application-service` owns document orchestration, assembly and persistence.** It fetches profile
+  evidence and the confirmed JD optimization, calls `ai-service` for grounded content fragments, then
+  **deterministically assembles** the versioned `ResumeDocumentModel`/`CoverLetterDocumentModel` (JSON,
+  carrying the platform's standard `schemaVersion` field — `docs/DATABASE.md` §2's existing
+  "document-shape version for tolerant reads" convention): every structural fact — employer, dates,
+  degree, certification, project name — copied straight from profile evidence, section inclusion,
+  order and page-fit truncation decided by Java rules, and the model's grounded prose woven into the
+  matching fields. A fragment `GroundingValidator` dropped after both attempts is simply omitted or
+  backed by a deterministic fallback built from evidence, exactly like
+  `EmailGenerationService.buildBody`'s existing fallback paragraphs — generation is never blocked by
+  one lost fragment. `application-service` then calls `render-service` with the assembled model and
+  persists the result as `ResumeVersion`/`CoverLetterVersion`, scoped to the `Application` aggregate
+  and mirroring `EmailContent` (ADR-017/019), rather than reviving a separate orchestration service.
+- **`render-service` only renders and verifies artifacts.** Thymeleaf template fill → jsoup/W3CDom
+  strict-XHTML normalisation → Open HTML to PDF (PDFBox) → PDF bytes, from the assembled
+  `ResumeDocumentModel`/`CoverLetterDocumentModel` and only that model — never raw evidence, never a
+  prompt, never partial content it would have to interpret structurally. After rendering it **verifies**
+  the artifact against the platform's hard PDF constraints — text layer selectable and matching the
+  model's content, only allowlisted fonts embedded, deterministic output for a given model + template
+  version, file size under 2MB, no encryption — and reports pass/fail per check rather than trusting the
+  renderer silently; it must reject a `schemaVersion` it doesn't recognise, never guess at an unfamiliar
+  shape. This is the platform's own prior rendering technology, chosen again on its own merits (see
+  Reason) — but **`document-service` itself is not reintroduced**: its old scope (two rendering
+  engines, structural analysis of arbitrary custom uploads, a Gemini analysis fallback) is not
+  repeated, and `render-service` is a smaller, single-purpose, PDF-only service. It is internal-only
+  like every other business service (no gateway route) and holds no AI call of any kind — it never
+  holds `GROQ_API_KEY` and never talks to `ai-service`.
+- **`ResumeDocumentModel`/`CoverLetterDocumentModel` is the one interface between content and
+  rendering** — `application-service`'s assembled output, not `ai-service`'s direct output. Everything
+  upstream of the model (evidence, JD optimization, `ai-service`'s grounded fragments,
+  `application-service`'s deterministic assembly) is where facts are decided and checked; everything
+  downstream (Thymeleaf, jsoup, Open HTML to PDF, and the post-render verification step) is pure, dumb
+  presentation and mechanical verification of already-validated data — it never reasons about facts,
+  mirroring exactly how JD optimization already separates `stripUnknownIds` (fact-checking, in
+  `ai-service`) from the external prompt export (presentation, in the frontend) today.
+- **No hiring-outcome or ATS score anywhere in this pipeline.** `render-service`'s verification step
+  and `application-service`'s persisted `ResumeVersion`/`CoverLetterVersion` may only expose
+  deterministic, factual coverage information — which evidence ids were used, which sections were
+  included, excluded or truncated for page fit, which grounded fragments validation dropped — never a
+  rating, a percentage, or a fabricated hiring probability. ATS *structural* scoring stays deferred to
+  a follow-up ADR exactly as this record originally said; `assessment-service`'s existing, unrelated
+  JD-fit score (ADR-009/033) is untouched, and this pipeline adds no new scoring surface of any kind.
+- **Explicitly not reintroduced**: `document-service` in its pre-ADR-033 shape; DOCX output of any
+  kind; Gemini in any capacity (ADR-033's removal stands, untouched); ATS structural scoring
+  (deferred — see Impact).
+- **ADR-034 "My Templates" is untouched and separate.** It remains a user-owned library of uploaded
+  files a human selects and pastes drafted content into elsewhere; `render-service` never reads the
+  `templates` collection or its MinIO bucket, never receives a My-Templates file as rendering input,
+  and nothing about `TemplateController`, `ObjectStorageService`, or the `/profile/templates` UI
+  changes. The two features solve different problems — My Templates hands a human a layout to reuse
+  by hand; this ADR generates CareerForge's own PDF from CareerForge's own grounded, assembled content.
+
+## Problem
+
+ADR-033 removed generation because the rendering pipeline was the platform's single largest source
+of complexity for a payoff — a document the user still had to check line by line and often
+reformat — that didn't justify carrying two rendering engines, a template catalogue, custom uploads,
+a Gemini multimodal analysis path, and object storage all at once. JD-optimization data alone is
+honest and genuinely useful, but it still leaves every user to assemble the actual document
+themselves in some other tool. What ADR-033 didn't have on the table was a design that keeps content
+generation's grounding guarantees fully intact while keeping rendering itself small, single-format,
+and structurally separated from both fact-generation and the unrelated My Templates feature. This
+ADR's job is to bring generation back without reopening the specific complexity ADR-033 cut: two
+rendering engines, structural analysis of arbitrary uploaded files, and a second AI provider.
+
+## Options
+
+For whether to reintroduce document generation at all: (a) leave the product as ADR-033 shipped it,
+JD-optimization data only; (b) reintroduce resume/cover-letter generation with a server-rendered PDF
+export.
+
+For the rendering technology, if (b): (a) Thymeleaf + Open HTML to PDF (the platform's own prior
+approach, PDF-only); (b) a Chromium-based rendering service (Puppeteer/Playwright/Gotenberg driving a
+real browser engine); (c) iText/pdfHTML; (d) client-side rendering with `react-pdf`, shipping no
+server-rendered artifact at all.
+
+For where the rendering code lives, if (a) Thymeleaf/Open HTML to PDF: (a) revive `document-service`
+in its pre-ADR-033 shape; (b) a new, narrower `render-service` scoped to PDF-only rendering of the
+versioned document-model; (c) fold rendering into an existing service (`application-service` or
+`ai-service`).
+
+## Selected Option
+
+(b) to reintroduce generation; (a) Thymeleaf + Open HTML to PDF for the rendering technology; (b) a
+new, narrower `render-service` for where it lives.
+
+## Reason
+
+**(b) over (a) — reintroduce generation**: the JD-optimization-only product is honest but incomplete
+for users who want CareerForge to close the last gap itself; this ADR only proceeds because a design
+now exists (the versioned document-model contract, below) that reintroduces the document without
+reopening ADR-033's actual complaint — rendering complexity — rather than simply reverting it.
+
+**(a) over the rejected rendering alternatives**:
+
+- **Chromium-based services (Puppeteer/Playwright/Gotenberg) rejected**: each PDF conversion spins up
+  or drives a full browser process — real infra weight (a browser engine per container) and
+  materially higher RAM per conversion than a JVM-native HTML→PDF pass, on a platform that has
+  deliberately avoided a second runtime class everywhere else in the reactor. ADR-033's own Reason
+  section already named "two rendering engines... a fallback for when it all failed anyway" as the
+  cost being cut; a headless-browser service adds a second, heavier runtime (Chromium) alongside the
+  JVM every other service already runs on, for a fidelity gain this platform's plain, evidence-driven
+  documents don't need.
+- **iText/pdfHTML rejected**: AGPL-licensed for anything short of a paid commercial licence —
+  shipping it without buying that licence would obligate releasing the platform's own source under
+  AGPL, and paying for it is a recurring cost the JVM-native, permissively-licensed Open HTML to PDF
+  does not carry for equivalent output.
+- **Client-side `react-pdf` rejected**: rendering logic would exist twice — once for whatever renders
+  the on-screen preview, once in `react-pdf`'s own layout engine for the actual download — and the
+  two can silently drift, so what a user previews is not provably what they download. More
+  fundamentally, it produces no server-side artifact at all: nothing to persist as `ResumeVersion`,
+  no attachment `application-service`'s existing email flow could reuse, and no way to prove after
+  the fact that the PDF a user actually received was built from grounding-validated content rather
+  than whatever the browser happened to render that session.
+
+**(b) over (a) reviving `document-service` or (c) folding rendering into an existing service**:
+reviving `document-service` in its old shape repeats exactly what ADR-033's Reason section identified
+as the actual cost — not rendering itself, but the combination of two rendering engines, structural
+analysis of arbitrary custom uploads, and a Gemini fallback bolted onto it. None of that is needed
+here: this ADR is PDF-only (no DOCX, no docx4j), works from a schema-validated document-model the
+renderer never has to interpret structurally (no `PdfStructureAnalyzer`), and involves no AI call of
+any kind inside `render-service` (Gemini stays removed per ADR-033, and even Groq never touches
+rendering — only content generation, upstream in `ai-service`, does). A new, narrower service is
+therefore genuinely smaller than the thing ADR-033 removed, not a resurrection of it. Folding
+*rendering* into an existing service instead was rejected because it would mix concerns those
+services deliberately don't have today: `ai-service` holds `GROQ_API_KEY` and nothing else touches it
+(ADR-012) — adding a PDF-rendering dependency graph (Thymeleaf, jsoup, Open HTML to PDF/PDFBox) to the
+one process holding the platform's only external AI credential is an unnecessary blast-radius
+increase; `application-service` already orchestrates content-generation calls today (email, ADR-019)
+and gains the same JSON-assembly work here — but assembling a JSON document-model deterministically is
+not the same cost as also carrying a binary PDF rendering engine in that process, which would
+re-couple exactly the "content/assembly" and "rendering" concerns this ADR's document-model contract
+exists to keep apart. A small, single-purpose `render-service` scales up ADR-034's own reasoning about
+"My Templates" (small feature, minimal new surface) appropriately for a larger feature: one new
+service with one job, not a fold-in that blurs an existing service's job, and not a two-engine revival
+that reopens the problem ADR-033 solved.
+
+**The `ResumeDocumentModel`/`CoverLetterDocumentModel` contract**, and precisely where it is produced,
+is the one genuinely new architectural piece this ADR adds beyond "bring rendering back." It is the
+single interface between content and rendering — but, refined before implementation, it is
+`application-service`'s assembled output, not `ai-service`'s direct output. `ai-service` returns
+grounded content fragments (prose only, each tied to evidence ids); `application-service` — which
+already owns every other structural fact about the candidate's application (job title, company,
+evidence) — is where those fragments are woven together with profile evidence, structural ordering
+rules and page-fit decisions into the model `render-service` actually renders. This keeps the
+`schemaVersion` convention working the same way either way: a template layout change doesn't require
+a new `ai-service` prompt, and a prompt/schema change doesn't require touching a Thymeleaf template,
+provided the model version each still targets is compatible; `render-service` must reject a
+document-model whose `schemaVersion` it doesn't recognise, never guess at an unfamiliar shape. It also
+draws the grounding boundary precisely: everything upstream of the document-model (evidence selection,
+prose generation and `GroundingValidator` in `ai-service`; structural assembly in `application-service`)
+is where facts are decided and checked; everything downstream (Thymeleaf, jsoup, Open HTML to PDF, and
+`render-service`'s own artifact verification) is pure, dumb presentation and mechanical verification of
+already-validated data and never reasons about facts at all — mirroring exactly how JD optimization
+already separates `stripUnknownIds` (fact-checking, in `ai-service`) from the external prompt export
+(presentation, in the frontend) today, and how `EmailGenerationService` already separates model-grounded
+paragraphs from the subject/signature it assembles itself.
+
+## Impact
+
+**Planned, not yet implemented.** This record is filed before any code, per CLAUDE.md's rule that a
+deviation from the original blueprint gets a new ADR "written **before** the code." The items below
+describe intended scope for the implementing PR(s); no build, test, or verification claim is made
+here, because none has run yet.
+
+- **`ai-service`**: two new operations, Resume Content and Cover Letter Content, each with its own
+  prompt/schema pair (`resume-content.schema.json`, `cover-letter-content.schema.json`, following the
+  existing `<operation>.schema.json` convention) producing **grounded content fragments only** —
+  not a `ResumeDocumentModel`/`CoverLetterDocumentModel`, and not a full document in any shape.
+  `GroundingValidator` applied to both exactly as it already is for Email content, including the
+  regenerate-once-then-strip pattern. No Gemini involvement anywhere; Groq only.
+- **`application-service`**: gains Resume/Cover-letter generation orchestration (calls `ai-service`
+  for grounded content fragments), a **deterministic assembly step** that builds the versioned
+  `ResumeDocumentModel`/`CoverLetterDocumentModel` from those fragments plus profile evidence and
+  structural rules (section inclusion/order, page-fit truncation — never asked of the LLM), a call to
+  `render-service` with the assembled model, and `ResumeVersion`/`CoverLetterVersion` persistence
+  scoped to the `Application` aggregate — mirroring its existing email-generation orchestration and
+  `EmailContent` shape (ADR-017/019) rather than reviving a separate orchestration service.
+- **New service — `render-service`** (port `8084` — free today; historically `resume-service`'s slot
+  before ADR-033, not `document-service`'s; internal-only, `expose`d not published, matching every
+  other business service). Thymeleaf → jsoup/W3CDom strict-XHTML normalisation → Open HTML to PDF
+  (PDFBox) → PDF bytes, from `application-service`'s assembled document-model, plus a post-render
+  **verification step** (text-layer/selectability check against the model's content, embedded-font
+  allowlist check, byte-size and no-encryption check) whose result is deterministic pass/fail facts,
+  never a score. Owns its own MinIO/S3 bucket, distinct from ADR-034's `careerforge-templates` bucket
+  (profile-service remains that bucket's sole consumer), and its own Mongo database for whatever
+  operational metadata rendering itself needs (render-job status, object keys, verification results)
+  — content and grounding data are never persisted here, only in `ai-service`'s response and
+  `application-service`'s versioned records.
+- **No change**: `jd-service`'s JD-optimization pipeline (`JdOptimizationService`, `stripUnknownIds`);
+  `assessment-service` or JD-fit scoring — this ADR adds no new rating, percentage or outcome-scoring
+  surface anywhere, only the deterministic coverage/verification facts described below;
+  `profile-service` or "My Templates" (ADR-034) — no coupling is added in either direction;
+  `ai-service`'s existing four operations, their prompts/schemas, or `GroundingValidator`'s existing
+  rule set beyond being reused, not modified, by the two new operations; Gemini's removed status
+  (ADR-033).
+- **Deferred to a follow-up ADR**: ATS structural scoring, and any hiring-outcome or fit score derived
+  from a rendered document. This ADR does not restore `ats_assessments`, any ATS endpoint, or
+  ATS-related frontend surface; that collection remains legacy/dead per ADR-033 and
+  `docs/DATABASE.md`'s legacy-collections table until a separate ADR addresses it on its own merits.
+  The only document-generation-pipeline output resembling "scoring" this ADR permits is
+  `render-service`'s deterministic per-check verification facts and `application-service`'s
+  deterministic coverage facts (evidence used, sections included/excluded/truncated, fragments
+  dropped by grounding) described in Decision — never a rating, percentage or probability.
+- **Superseded**: ADR-033's resume/cover-letter-generation and PDF/DOCX-ban clauses only (index table
+  updated to "Partially superseded by ADR-036"). ADR-033's Gemini-removal and deterministic-JD-fit-
+  scoring clauses remain `Accepted` and binding, unchanged by this ADR. ADR-034 is not superseded in
+  any part — it remains fully `Accepted` and untouched.
