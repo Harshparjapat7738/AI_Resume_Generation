@@ -41,6 +41,14 @@
             <groupId>org.springdoc</groupId>
             <artifactId>springdoc-openapi-starter-webmvc-ui</artifactId>
         </dependency>
+        <!-- Structural well-formedness check for loaded template markup (this step) and,
+             per ADR-036, the strict-XHTML normalisation pass ahead of Open HTML to PDF
+             (a later step) — the same library ADR-036 already names for that second use.
+             Version is managed in the root pom. -->
+        <dependency>
+            <groupId>org.jsoup</groupId>
+            <artifactId>jsoup</artifactId>
+        </dependency>
     </dependencies>
 
     <build>
