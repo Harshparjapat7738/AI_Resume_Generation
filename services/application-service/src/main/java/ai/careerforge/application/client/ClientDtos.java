@@ -38,6 +38,21 @@ public final class ClientDtos {
             List<String> keywords, List<RequirementDto> requirements) {
     }
 
+    /** Mirrors {@code GET /api/jd/{id}/optimization} (ADR-033) — the product's primary
+     *  deliverable, and the source of truth {@code ResumeRenderService} draws on to decide
+     *  which evidence belongs on a resume for this job and what to lead with.
+     *  {@code optimisation} is passed through exactly as jd-service already treats it: an
+     *  opaque, already-verified map (keywords/requirementMatches/missingRequirements/emphasis)
+     *  jd-service itself never interprets structurally beyond persisting and republishing it.
+     *  {@code citedEvidenceIds} is the complete, already-stripped-of-hallucinations set of
+     *  evidence ids the optimization actually relies on — see
+     *  {@code JdOptimizationService.stripUnknownIds}. */
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public record JdOptimizationDto(
+            String id, String jobDescriptionId, java.util.Map<String, Object> optimisation,
+            List<String> citedEvidenceIds, java.time.Instant createdAt) {
+    }
+
     // ---- resume-service ---------------------------------------------------------
 
     /** Only the fields application-service actually reads from {@code GET /api/resumes/{id}}. */
@@ -61,10 +76,17 @@ public final class ClientDtos {
 
     // ---- profile-service --------------------------------------------------------
 
-    /** Only the field application-service reads from {@code GET /api/profile} — the
-     *  candidate's own stated name for the email sign-off (never invented, ADR-019). */
+    /** The fields application-service reads from {@code GET /api/profile}: the candidate's own
+     *  stated name (email sign-off, ADR-019, and the resume header) plus contact details the
+     *  resume header also needs (ADR-036 — no evidenceId, no photo; identity data, not a
+     *  candidate claim). The single-arg constructor keeps every existing email-only call site
+     *  working unchanged. */
     @JsonIgnoreProperties(ignoreUnknown = true)
-    public record PersonalInformationDto(String fullName) {
+    public record PersonalInformationDto(String fullName, String email, String phone, List<String> links) {
+
+        public PersonalInformationDto(String fullName) {
+            this(fullName, null, null, List.of());
+        }
     }
 
     @JsonIgnoreProperties(ignoreUnknown = true)
@@ -108,5 +130,63 @@ public final class ClientDtos {
 
     public record CoverLetterContentResponse(JsonNode content, JsonNode grounding,
                                              List<String> removedParagraphs, JsonNode provenance) {
+    }
+
+    // ---- render-service ---------------------------------------------------------
+
+    /**
+     * Local mirrors of render-service's own request/response contract (ADR-036). Enum-shaped
+     * fields ({@code origin}, {@code heading}, {@code template}, {@code outputFormat},
+     * {@code pageSize}, {@code fontFamily}, {@code status}) are plain {@code String}s here
+     * rather than importing render-service's Java enums — a different Maven module, and the
+     * same "no shared DTO module" reasoning (ADR-006) that already applies to every other
+     * client mirror in this file. Jackson serialises a Java enum by its constant name by
+     * default, so a matching literal String round-trips against render-service's real
+     * enum-typed fields without any conversion code.
+     */
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public record RenderContentLeaf(String text, List<String> evidenceIds, String origin) {
+    }
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public record RenderHeaderLink(String label, String url) {
+    }
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public record RenderDocumentHeader(
+            String fullName, String email, String phone, String location, List<RenderHeaderLink> links) {
+    }
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public record RenderSectionEntry(
+            String evidenceId, String title, String organisation, String location,
+            String startDate, String endDate, List<RenderContentLeaf> bullets) {
+    }
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public record RenderResumeSection(String heading, List<RenderSectionEntry> entries) {
+    }
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public record RenderHints(String pageSize, int maxPages, String fontFamily, String accentColorHex) {
+    }
+
+    public record ResumeRenderRequest(
+            String schemaVersion, String template, String outputFormat, RenderDocumentHeader header,
+            RenderContentLeaf summary, List<RenderResumeSection> sections, RenderHints renderHints) {
+    }
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public record RenderDocumentMetadata(
+            String documentId, String format, long sizeBytes, int pageCount, java.time.Instant renderedAt) {
+    }
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public record RenderErrorDto(String code, String message) {
+    }
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public record RenderResponse(
+            String status, RenderDocumentMetadata document, byte[] pdfBytes, List<RenderErrorDto> errors) {
     }
 }
