@@ -26,6 +26,7 @@
         <module>services/auth-service</module>
         <module>services/profile-service</module>
         <module>services/jd-service</module>
+        <module>services/render-service</module>
         <module>services/ai-service</module>
         <module>services/assessment-service</module>
         <module>services/application-service</module>

@@ -208,6 +208,18 @@ services:
       discovery-server: { condition: service_healthy }
 
 
+  render-service:
+    <<: *service-base
+    profiles: [app]
+    container_name: careerforge-render
+    build: { context: ., dockerfile: services/render-service/Dockerfile }
+    environment:
+      <<: *service-env
+    expose: ["8084"]
+    depends_on:
+      config-server: { condition: service_healthy }
+      discovery-server: { condition: service_healthy }
+
   ai-service:
     <<: *service-base
     profiles: [app]
