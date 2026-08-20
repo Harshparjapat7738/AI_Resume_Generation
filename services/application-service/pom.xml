@@ -67,6 +67,14 @@
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-oauth2-client</artifactId>
         </dependency>
+        <!-- Test-only: validates the ResumeDocumentModel/CoverLetterDocumentModel round-trip
+             tests against schemas/*.schema.json (ai-service's SchemaValidator uses the same
+             library against its own schemas; version is managed in the root pom). -->
+        <dependency>
+            <groupId>com.networknt</groupId>
+            <artifactId>json-schema-validator</artifactId>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
 
     <build>

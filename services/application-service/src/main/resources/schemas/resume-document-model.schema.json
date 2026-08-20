@@ -1,0 +1,129 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Resume document model (ADR-036)",
+  "description": "The content/render boundary application-service assembles and render-service renders. Every candidate-facing leaf carries an evidenceId; renderHints never carries content.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "header", "sections", "renderHints", "gapReport"],
+  "properties": {
+    "schemaVersion": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$" },
+
+    "header": { "$ref": "#/$defs/header" },
+
+    "summary": {
+      "description": "Optional professional summary synthesised across evidence. Absent when assembly chose not to include one.",
+      "oneOf": [{ "$ref": "#/$defs/contentLeaf" }, { "type": "null" }]
+    },
+
+    "sections": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["heading", "entries"],
+        "properties": {
+          "heading": {
+            "type": "string",
+            "enum": ["EXPERIENCE", "EDUCATION", "SKILLS", "PROJECTS", "CERTIFICATIONS", "ACHIEVEMENTS"]
+          },
+          "entries": {
+            "type": "array",
+            "minItems": 1,
+            "items": { "$ref": "#/$defs/sectionEntry" }
+          }
+        }
+      }
+    },
+
+    "renderHints": { "$ref": "#/$defs/renderHints" },
+    "gapReport": { "$ref": "#/$defs/gapReport" }
+  },
+
+  "$defs": {
+    "evidenceId": {
+      "type": "string",
+      "pattern": "^(EXP|PROJ|SKILL|CERT|EDU|ACH)-[0-9]{3,4}$"
+    },
+
+    "contentLeaf": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["text", "evidenceIds", "origin"],
+      "properties": {
+        "text": { "type": "string", "minLength": 1, "maxLength": 2000 },
+        "evidenceIds": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/evidenceId" }
+        },
+        "origin": { "type": "string", "enum": ["VERBATIM_FROM_PROFILE", "REPHRASED_FROM_PROFILE"] }
+      }
+    },
+
+    "headerLink": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["label", "url"],
+      "properties": {
+        "label": { "type": "string", "minLength": 1, "maxLength": 50 },
+        "url": { "type": "string", "maxLength": 500, "pattern": "^https?://.+" }
+      }
+    },
+
+    "header": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["fullName", "email"],
+      "properties": {
+        "fullName": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "email": { "type": "string", "maxLength": 200, "format": "email" },
+        "phone": { "type": ["string", "null"], "maxLength": 40 },
+        "location": { "type": ["string", "null"], "maxLength": 200 },
+        "links": { "type": "array", "items": { "$ref": "#/$defs/headerLink" } }
+      }
+    },
+
+    "sectionEntry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["evidenceId", "title"],
+      "properties": {
+        "evidenceId": { "$ref": "#/$defs/evidenceId" },
+        "title": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "organisation": { "type": ["string", "null"], "maxLength": 200 },
+        "location": { "type": ["string", "null"], "maxLength": 200 },
+        "startDate": { "type": ["string", "null"], "maxLength": 50 },
+        "endDate": { "type": ["string", "null"], "maxLength": 50 },
+        "bullets": { "type": "array", "items": { "$ref": "#/$defs/contentLeaf" } }
+      }
+    },
+
+    "renderHints": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["pageSize", "maxPages", "fontFamily"],
+      "properties": {
+        "pageSize": { "type": "string", "enum": ["A4", "LETTER"] },
+        "maxPages": { "type": "integer", "minimum": 1, "maximum": 3 },
+        "fontFamily": {
+          "type": "string",
+          "enum": ["TIMES_NEW_ROMAN", "GEORGIA", "ARIAL", "HELVETICA", "CALIBRI"]
+        },
+        "accentColorHex": { "type": ["string", "null"], "pattern": "^#[0-9A-Fa-f]{6}$" }
+      }
+    },
+
+    "gapReport": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["evidenceIdsUsed", "sectionsOmitted", "contentRemoved", "truncatedForPageFit"],
+      "properties": {
+        "evidenceIdsUsed": { "type": "array", "items": { "type": "string" } },
+        "sectionsOmitted": { "type": "array", "items": { "type": "string" } },
+        "contentRemoved": { "type": "array", "items": { "type": "string" } },
+        "truncatedForPageFit": { "type": "array", "items": { "type": "string" } }
+      }
+    }
+  }
+}
