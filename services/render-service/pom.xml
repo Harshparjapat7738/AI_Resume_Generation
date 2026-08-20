@@ -49,6 +49,17 @@
             <groupId>org.jsoup</groupId>
             <artifactId>jsoup</artifactId>
         </dependency>
+        <!-- The HTML-fill half of ADR-036's Thymeleaf -> strict-XHTML -> Open HTML to PDF
+             pipeline. Version managed by spring-boot-starter-parent, like every other
+             spring-boot-starter-* dependency in this reactor — no explicit version pinned
+             here, matching every peer service's own starters. This service never uses
+             Thymeleaf's Spring MVC view-resolution machinery (ThymeleafHtmlRenderer builds
+             its own TemplateEngine over a StringTemplateResolver, fed by TemplateProvider) —
+             only the templating engine itself. -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-thymeleaf</artifactId>
+        </dependency>
     </dependencies>
 
     <build>

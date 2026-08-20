@@ -1,16 +1,35 @@
 <!--
-  Placeholder for the STANDARD cover-letter layout (ADR-036). This step only proves the
-  loading/validation layer works against a real classpath resource — no Thymeleaf binding to
-  CoverLetterRenderRequest exists yet, and this file renders nothing. That comes with the
-  actual Thymeleaf-fill → strict-XHTML → Open HTML to PDF pipeline in a later step.
+  STANDARD cover-letter layout (ADR-036). Same escaping/expression conventions as the resume
+  template — see its header comment.
 -->
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" xmlns:th="http://www.thymeleaf.org">
 <head>
   <meta charset="UTF-8" />
-  <title>Cover Letter</title>
+  <title th:text="${header.fullName() + ' — Cover Letter'}">Cover Letter</title>
 </head>
 <body>
-  <p>Standard cover-letter template placeholder — content binding not yet implemented.</p>
+  <header class="document-header">
+    <h1 th:text="${header.fullName()}">Full Name</h1>
+    <p class="contact">
+      <span th:text="${header.email()}">email@example.com</span>
+      <span th:if="${header.phone() != null}" th:text="${' · ' + header.phone()}"> · phone</span>
+      <span th:if="${header.location() != null}" th:text="${' · ' + header.location()}"> · location</span>
+    </p>
+  </header>
+
+  <section class="target" th:if="${targetRole != null or targetCompany != null}">
+    <p th:if="${targetRole != null and targetCompany != null}"
+       th:text="${'Re: ' + targetRole + ' at ' + targetCompany}">Re: Role at Company</p>
+    <p th:if="${targetRole != null and targetCompany == null}" th:text="${'Re: ' + targetRole}">Re: Role</p>
+    <p th:if="${targetRole == null and targetCompany != null}" th:text="${'Re: ' + targetCompany}">Re: Company</p>
+  </section>
+
+  <p class="salutation" th:text="${salutation}">Dear Hiring Manager,</p>
+
+  <p class="paragraph" th:each="paragraph : ${paragraphs}" th:text="${paragraph.text()}">Paragraph.</p>
+
+  <p class="closing" th:text="${closing}">Sincerely,</p>
+  <p class="signature" th:text="${signatureName}">Signature</p>
 </body>
 </html>

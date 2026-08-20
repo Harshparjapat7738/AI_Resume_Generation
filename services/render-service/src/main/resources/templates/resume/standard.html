@@ -1,16 +1,53 @@
 <!--
-  Placeholder for the STANDARD resume layout (ADR-036). This step only proves the
-  loading/validation layer works against a real classpath resource — no Thymeleaf binding to
-  ResumeRenderRequest exists yet, and this file renders nothing. That comes with the actual
-  Thymeleaf-fill → strict-XHTML → Open HTML to PDF pipeline in a later step.
+  STANDARD resume layout (ADR-036). Every dynamic value below uses th:text (escaped output,
+  never th:utext) — candidate-supplied text is always emitted as inert, entity-escaped text,
+  never live markup. Every ${...} expression is self-contained (literals and concatenation
+  live inside the same OGNL expression, never split across th:text and plain body text) to
+  keep the syntax uniform and unambiguous. Structure only; page fitting, fonts and the
+  strict-XHTML pass are later steps (jsoup/W3CDom, Open HTML to PDF).
 -->
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" xmlns:th="http://www.thymeleaf.org">
 <head>
   <meta charset="UTF-8" />
-  <title>Resume</title>
+  <title th:text="${header.fullName() + ' — Resume'}">Resume</title>
 </head>
 <body>
-  <p>Standard resume template placeholder — content binding not yet implemented.</p>
+  <header class="document-header">
+    <h1 th:text="${header.fullName()}">Full Name</h1>
+    <p class="contact">
+      <span th:text="${header.email()}">email@example.com</span>
+      <span th:if="${header.phone() != null}" th:text="${' · ' + header.phone()}"> · phone</span>
+      <span th:if="${header.location() != null}" th:text="${' · ' + header.location()}"> · location</span>
+    </p>
+    <ul class="links" th:if="${!header.links().isEmpty()}">
+      <li th:each="link : ${header.links()}">
+        <a th:href="${link.url()}" th:text="${link.label()}">Link</a>
+      </li>
+    </ul>
+  </header>
+
+  <section class="summary" th:if="${summary != null}">
+    <p th:text="${summary.text()}">Professional summary.</p>
+  </section>
+
+  <section class="resume-section" th:each="section : ${sections}">
+    <h2 th:text="${section.heading().atsLabel()}">Section</h2>
+
+    <article class="entry" th:each="entry : ${section.entries()}">
+      <h3 th:text="${entry.title()}">Title</h3>
+      <p class="entry-meta">
+        <span th:if="${entry.organisation() != null}" th:text="${entry.organisation()}">Organisation</span>
+        <span th:if="${entry.location() != null}" th:text="${' — ' + entry.location()}"> — Location</span>
+        <span th:if="${entry.startDate() != null}"
+              th:text="${' (' + entry.startDate() + ' – ' + (entry.endDate() != null ? entry.endDate() : 'Present') + ')'}">
+           (dates)
+        </span>
+      </p>
+      <ul class="bullets" th:if="${!entry.bullets().isEmpty()}">
+        <li th:each="bullet : ${entry.bullets()}" th:text="${bullet.text()}">Bullet</li>
+      </ul>
+    </article>
+  </section>
 </body>
 </html>
