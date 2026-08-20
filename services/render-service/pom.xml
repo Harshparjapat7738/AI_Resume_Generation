@@ -60,6 +60,18 @@
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-thymeleaf</artifactId>
         </dependency>
+        <!-- The PDF half of ADR-036's Thymeleaf -> strict-XHTML -> Open HTML to PDF pipeline —
+             the platform's approved PDF engine (see ARCHITECTURE_DECISIONS.md ADR-036's Reason
+             section for why: JVM-native, permissively licensed, no second runtime class like a
+             Chromium-based alternative would add). Versions managed in the root pom. -->
+        <dependency>
+            <groupId>io.github.openhtmltopdf</groupId>
+            <artifactId>openhtmltopdf-pdfbox</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.pdfbox</groupId>
+            <artifactId>pdfbox</artifactId>
+        </dependency>
     </dependencies>
 
     <build>
