@@ -10,8 +10,20 @@ actually evidence, which requirements it cannot meet, and what to lead with. The
 that structured output (JSON, or a ready-to-paste prompt) and creates their resume or cover
 letter on whatever platform they prefer.
 
-**CareerForge does not generate a resume or a cover letter, and produces no PDF or DOCX**
-(ADR-033). Application **email** content generation is a separate, still-active feature.
+**CareerForge generates a Resume or Cover Letter PDF from the same grounded evidence JD
+optimization already analysed** (ADR-036, reintroducing what ADR-033 removed, behind a versioned
+document-model contract). `ai-service` produces a schema-validated, grounded document model;
+`render-service` turns that model — and only that model — into a PDF via Thymeleaf + Open HTML to
+PDF. No DOCX, no mail-merge, no custom-template support, and no AI call inside rendering itself —
+`render-service` never holds `GROQ_API_KEY` and never talks to `ai-service`. Application **email**
+content generation remains a separate, still-active feature. The one other document-adjacent
+feature is **"My Templates" (ADR-034)**: a user uploads a Resume/Cover Letter file to their
+profile once, and later *selects* — never re-uploads — it at JD-optimization handoff time; its
+name/filename/type is referenced in the external AI prompt so the user knows which layout to apply
+the drafted content to when they choose not to use CareerForge's own generated PDF. There is no
+structural analysis, no mail-merge, and no AI involvement in that feature — the file is stored and
+returned exactly as uploaded, and `document-service` is not reintroduced (ADR-036's
+`render-service` is a smaller, single-purpose, PDF-only service, not a revival of it).
 
 **The one rule everything else serves:** the AI may select, rank, classify and map facts the
 user supplied — it must never invent an employer, date, metric, technology, certification,
@@ -32,11 +44,13 @@ A missing requirement stays missing: the optimization reports it as a gap and th
 prompt explicitly forbids claiming it. It also does **not** promise a job or display a
 fabricated hiring probability. JD-fit scoring is computed deterministically in Java from the
 optimization, the JD and the profile — never asked of the LLM (ADR-009, ADR-033). ATS scoring
-was removed with resume generation: every check read a rendered resume's structure.
+remains removed even though resume generation returned in ADR-036 — restoring it is deferred to a
+follow-up ADR (ADR-036's own Impact section); every historical check read a rendered resume's
+structure the old pipeline no longer has in this shape.
 
 ## Where things live
 
-A Maven multi-module reactor (9 Spring Boot services + the `platform-common` library, Java 21) plus one React frontend.
+A Maven multi-module reactor (10 Spring Boot services + the `platform-common` library, Java 21) plus one React frontend.
 Every service is independently deployable and owns exactly one MongoDB Atlas database —
 no service ever queries another's collections; cross-service reads go through that
 service's own API (via Eureka service discovery, not the gateway, with caller identity
@@ -49,15 +63,16 @@ forwarded as `X-User-Id` — see `FeignHeaderForwardingConfig` in each client).
 | `discovery-server` | 8761 | Eureka registry the gateway and Feign clients route through (`lb://service-name`). |
 | `platform-common` | — | Shared library, not deployed: error envelope (`ErrorCode`/`ApiError`/`ApiException`/`GlobalExceptionHandler`), `@CallerId` header resolver, correlation-ID filter. No domain models or DTOs live here (ADR-006). |
 | `auth-service` | 8081 | Accounts, BCrypt password hashing, JWT mint/refresh rotation, Google OAuth. Signs the JWT the gateway verifies — the only two places the signing secret exists. |
-| `profile-service` | 8082 | The candidate's verified data: personal info + six evidence-bearing sections (education, experience, skills, projects, certifications, achievements), each item carrying a stable `evidenceId`. **Sole source of truth** — if it's not here, no optimization may assert it. |
+| `profile-service` | 8082 | The candidate's verified data: personal info + six evidence-bearing sections (education, experience, skills, projects, certifications, achievements), each item carrying a stable `evidenceId`. **Sole source of truth** — if it's not here, no optimization may assert it. Also owns **"My Templates"** (ADR-034): a `templates` collection of user-uploaded Resume/Cover Letter files (validated, never parsed) backed by the MinIO/S3 bucket `document-service` used to own — upload/list/rename/set-default/delete/download at `/api/profile/templates/**`. |
 | `jd-service` | 8083 | Job description intake (paste text or SSRF-guarded URL fetch — ADR-015), mandatory user confirmation, requirement extraction/analysis, **and JD optimization** — the product's primary output (ADR-033): orchestrates confirmed analysis + profile evidence through ai-service and persists the result (`jd_optimizations`, one per JD version). |
-| `ai-service` | 8085 | The **only** process holding `GROQ_API_KEY` (ADR-012, internal-only, no gateway route). Four operations: JD analysis, evidence selection, **JD optimization**, and email content. Versioned prompts, JD fenced as untrusted data, JSON-Schema-validated output, `GroundingValidator` (the anti-fabrication gate for email prose). Groq is the only provider — Gemini was removed entirely (ADR-033). |
+| `render-service` | 8084 | Renders an already-grounded, schema-validated document model into a PDF (ADR-036): Thymeleaf template fill → jsoup/W3CDom strict-XHTML normalisation → Open HTML to PDF (PDFBox). PDF-only — no DOCX, no mail-merge, no custom-template support. Holds no AI credential and never calls `ai-service`; owns its own MinIO/S3 bucket, distinct from `profile-service`'s "My Templates" bucket (ADR-034). |
+| `ai-service` | 8085 | The **only** process holding `GROQ_API_KEY` (ADR-012, internal-only, no gateway route). Six operations: JD analysis, evidence selection, **JD optimization**, email content, and (ADR-036) **resume content** + **cover-letter content** — the two new operations produce a versioned, schema-validated document model that `render-service` renders, never `ai-service` itself. Versioned prompts, JD fenced as untrusted data, JSON-Schema-validated output, `GroundingValidator` (the anti-fabrication gate, now applied to resume/cover-letter content exactly as it already was for email prose). Groq is the only provider — Gemini was removed entirely (ADR-033) and stays removed under ADR-036. |
 | `assessment-service` | 8086 | Deterministic JD-fit/screening-readiness scoring, keyed on the JD optimization (ADR-033). ATS scoring was removed with resume generation. Never calls an LLM. |
-| `application-service` | 8088 | The central `Application` aggregate and **application-email generation** (ADR-017/019) — the one generation feature ADR-033 kept. Cover-letter generation was removed. |
+| `application-service` | 8088 | The central `Application` aggregate, **application-email generation** (ADR-017/019), and (ADR-036) **resume/cover-letter generation orchestration** — calls `ai-service` for the document model, then `render-service` for the PDF, and persists `ResumeVersion`/`CoverLetterVersion` scoped to the `Application`. Cover-letter generation, removed by ADR-033, is back under this orchestration. |
 
 `frontend/` — React 19 + TypeScript + Vite + Tailwind 4, feature-folder structure:
 - `src/features/<area>/` — one folder per screen area (`onboarding`, `profile`, `generate`, `results`, `dashboard`, `applications`, `emails`, `analytics`, ...), each with its page(s) and local `components/`.
-- `src/services/*Api.ts` — one client module per backend service, all going through the single fetch wrapper `apiClient.ts` (auth header, `credentials: 'include'` for the refresh cookie, `ApiError` on non-2xx). No component calls `fetch` directly.
+- `src/services/*Api.ts` — one client module per backend service (`profile-service` has two: `profileApi.ts` for the profile itself and `templateApi.ts` for "My Templates"), all going through the single fetch wrapper `apiClient.ts` (auth header, `credentials: 'include'` for the refresh cookie, `ApiError` on non-2xx). No component calls `fetch` directly.
 - `src/components/ui/` — shared primitives (Button, Card, Select, TextField, ...) reused across features rather than redefined per screen.
 - `src/routes/router.tsx` — the full route table; everything except `/`, `/login`, `/register` sits behind `ProtectedRoute`.
 
@@ -68,7 +83,7 @@ forwarded as `X-User-Id` — see `FeignHeaderForwardingConfig` in each client).
 | `API_CATALOG.md` | Every endpoint, request/response shape, error code — implemented vs. planned |
 | `API_INTEGRATION.md` | Which frontend file calls which endpoint; session/auth/onboarding redirect logic |
 | `DATABASE.md` | Per-service Mongo collections, indexes, retention |
-| `ARCHITECTURE_DECISIONS.md` | 33 ADRs — every place implementation deviated from the original blueprint, and why. Many are marked "Superseded by ADR-033" (the resume/cover-letter/document decisions); read the index table's Status column before trusting an older one |
+| `ARCHITECTURE_DECISIONS.md` | 35 ADRs — every place implementation deviated from the original blueprint, and why. Many are marked "Superseded by ADR-033" (the resume/cover-letter/document decisions); read the index table's Status column before trusting an older one. ADR-034 ("My Templates") and ADR-035 (`notification-service` removed) are the most recent |
 | `EXTERNAL_APIS.md` | Groq/Google OAuth/Atlas/Gmail/SMTP setup, scopes, rate limits |
 | `ai-abstraction.md` | The `AiChatClient` contract and why it stayed after Gemini was removed |
 | `IMPLEMENTATION_PLAN.md` | Milestones and what's left |
@@ -81,12 +96,14 @@ forwarded as `X-User-Id` — see `FeignHeaderForwardingConfig` in each client).
 custom-PDF template analysis, which died with document rendering. `GeminiClient`,
 `GeminiProperties`, `GEMINI_API_KEY` and `google-genai` are all gone; don't reintroduce them.
 
-Four Groq operations: **JD analysis**, **evidence selection**, **JD optimization** (the product's
-main output), **email content**. Every one injects `AiChatClient`, whose sole implementation is
-`GroqClient`.
+Six Groq operations: **JD analysis**, **evidence selection**, **JD optimization** (the product's
+main output), **email content**, and (ADR-036) **resume content** + **cover-letter content**.
+Every one injects `AiChatClient`, whose sole implementation is `GroqClient`.
 
-**No AI touches document rendering, because there is no document rendering.** Resume/cover-letter
-generation and every PDF/DOCX path were removed in ADR-033.
+**No AI touches document rendering.** Resume/cover-letter generation returned in ADR-036, but the
+document-model contract keeps the boundary exactly where it was: `ai-service` produces and
+grounds the content; `render-service` turns an already-validated document model into a PDF — it
+never holds `GROQ_API_KEY`, never injects `AiChatClient`, and never calls `ai-service` at all.
 
 **Groq's rate limit is the usual cause of a failed generation**, and it is counter-intuitive:
 Groq reserves your full `max_completion_tokens` (`GROQ_MAX_OUTPUT_TOKENS`, default 4096) against
@@ -97,13 +114,24 @@ It is not an outage; check `x-ratelimit-remaining-tokens` before assuming one.
 
 ## Known loose ends
 
-- **MinIO/`minio-init` are still in `docker-compose.yml` but nothing uses them.** Object storage
-  existed for `document-service`; with that gone, no service reads `S3_*`/`MINIO_ROOT_*` and
-  those keys are no longer in `.env.example`. Safe to delete from compose.
+- **MinIO/`minio-init` in `docker-compose.yml` are active again, not orphaned.** `document-service`
+  (their original consumer) is gone, but `profile-service` became their new, and only, consumer
+  for **"My Templates"** (ADR-034) — `S3_*`/`MINIO_ROOT_*` are back in `.env.example`, scoped to
+  profile-service. Don't delete the compose services or treat those env vars as dead.
 - **Six legacy Mongo collections have zero reads and zero writes** (`resume_versions`,
   `resume_generations`, `cover_letter_versions`, `rendered_documents`,
   `custom_template_assets`, `ats_assessments`). Deliberately not dropped — `docs/DATABASE.md`
-  has the backup-then-drop procedure.
+  has the backup-then-drop procedure. `custom_template_assets` is the old, dead `document-service`
+  collection — don't confuse it with profile-service's live `templates` collection (ADR-034).
+  `resume_versions`/`resume_generations`/`cover_letter_versions` are likewise dead — don't confuse
+  them with the new `ResumeVersion`/`CoverLetterVersion` collections ADR-036 adds in
+  `application-service`; they're deliberately different names precisely to avoid that confusion.
+- **`render-service` owns its own MinIO/S3 bucket (ADR-036), separate from `profile-service`'s
+  "My Templates" bucket (ADR-034).** The two are never the same bucket and never share a consumer —
+  don't route render-service through profile-service's `ObjectStorageService` or vice versa.
+- **ATS structural scoring stays removed even after ADR-036 brought resume/cover-letter generation
+  back.** `ats_assessments` is still one of the six dead collections above; reviving ATS scoring is
+  explicitly deferred to its own future ADR, not implied by ADR-036.
 - **`frontend/tests/e2e/jd-optimization.spec.ts` has never been run.** It needs the full live
   stack. Its Kafka-gap assertion depends on Groq classifying an unevidenced requirement as
   missing; loosen it if the model proves generous.
@@ -122,7 +150,7 @@ Three interchangeable modes (`README.md` "Local setup" has full detail):
 docker compose --profile app up --build
 
 # Mode 2 — infra in Docker, services run locally (fastest edit loop)
-docker compose up -d                              # Redis, Prometheus, Grafana, OTel (MinIO too — orphaned, see below)
+docker compose up -d                              # Redis, Prometheus, Grafana, OTel, MinIO (profile-service's "My Templates" storage)
 mvn -pl services/config-server    spring-boot:run
 mvn -pl services/discovery-server spring-boot:run
 mvn -pl services/api-gateway      spring-boot:run
@@ -137,7 +165,8 @@ cd frontend && npm install && npm run dev          # :5173, proxies /api to :808
 ```
 
 `.env` (copy from `.env.example`) needs at minimum `MONGODB_URI` and `JWT_SECRET` (32+ bytes —
-`openssl rand -base64 48`) to boot; add `GROQ_API_KEY` before touching any AI operation.
+`openssl rand -base64 48`) to boot; add `GROQ_API_KEY` before touching any AI operation, and
+`MINIO_ROOT_USER`/`MINIO_ROOT_PASSWORD`/`S3_*` before touching "My Templates" (profile-service).
 Spring Boot never reads `.env` itself — only Docker Compose and
 `run-local.ps1` load it into the process environment. There is no local MongoDB container by
 design (ADR-003) — it's Atlas in every mode.
