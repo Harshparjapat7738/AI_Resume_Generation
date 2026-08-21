@@ -11,6 +11,19 @@
 <head>
   <meta charset="UTF-8" />
   <title th:text="${header.fullName() + ' — Resume'}">Resume</title>
+  <!--
+    Print-pagination only — no color/typography here, that stays the renderer's/base-font
+    concern. Without this, a page break can fall between one entry's title/meta line and its
+    own bullets (or right after a lone section heading), which reads as content going missing
+    rather than a normal page turn. `page-break-inside: avoid` asks the renderer to keep one
+    entry — or a heading and the first line under it — together when it still fits on a single
+    page; a genuinely long entry that can't fit on one page at all still flows across pages
+    rather than being forced to overflow, since `avoid` is a preference, not a hard constraint.
+  -->
+  <style>
+    .entry { page-break-inside: avoid; }
+    .resume-section h2 { page-break-after: avoid; }
+  </style>
 </head>
 <body>
   <header class="document-header">
