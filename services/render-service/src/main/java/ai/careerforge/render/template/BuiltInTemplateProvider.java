@@ -8,6 +8,7 @@ import java.util.Locale;
 import java.util.Map;
 import org.jsoup.Jsoup;
 import org.jsoup.nodes.Document;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.core.io.Resource;
 import org.springframework.core.io.ResourceLoader;
 import org.springframework.stereotype.Component;
@@ -34,7 +35,14 @@ public class BuiltInTemplateProvider implements TemplateProvider {
     private final ResourceLoader resourceLoader;
     private final Map<TemplateKey, String> registry;
 
-    /** Production wiring: Spring's {@link ResourceLoader}, the real built-in registry. */
+    /** Production wiring: Spring's {@link ResourceLoader}, the real built-in registry.
+     *  {@code @Autowired} is required here, not decorative: with two constructors declared and
+     *  neither the sole one, Spring cannot infer which to use for DI and falls back to a
+     *  no-arg default constructor that does not exist, failing bean creation at startup — this
+     *  class was never actually booted as a running Spring bean before (only unit-tested via
+     *  the package-private constructor below, bypassing DI entirely) until this was caught by
+     *  render-service's first real end-to-end startup. */
+    @Autowired
     public BuiltInTemplateProvider(ResourceLoader resourceLoader) {
         this(resourceLoader, defaultRegistry());
     }
