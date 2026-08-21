@@ -199,38 +199,39 @@ public class ProfileController {
         return new EvidenceItemResponse(
                 e.evidenceId(), "EXPERIENCE",
                 e.title() + (e.company() != null ? " at " + e.company() : ""),
-                e.company(), e.description(), e.technologies(), e.metrics(), e.start(), e.end());
+                e.company(), e.description(), e.technologies(), e.metrics(), e.start(), e.end(),
+                e.bullets());
     }
 
     private static EvidenceItemResponse toEvidenceItem(Education e) {
         return new EvidenceItemResponse(
                 e.evidenceId(), "EDUCATION",
                 e.degree() + (e.field() != null ? " in " + e.field() : ""),
-                e.institution(), e.description(), List.of(), List.of(), e.start(), e.end());
+                e.institution(), e.description(), List.of(), List.of(), e.start(), e.end(), List.of());
     }
 
     private static EvidenceItemResponse toEvidenceItem(Skill s) {
         return new EvidenceItemResponse(
                 s.evidenceId(), "SKILL", s.name(), null,
-                s.proficiency(), List.of(s.name()), List.of(), null, null);
+                s.proficiency(), List.of(s.name()), List.of(), null, null, List.of());
     }
 
     private static EvidenceItemResponse toEvidenceItem(Project p) {
         return new EvidenceItemResponse(
                 p.evidenceId(), "PROJECT", p.name(), p.role(), p.description(),
-                p.technologies(), p.metrics(), p.start(), p.end());
+                p.technologies(), p.metrics(), p.start(), p.end(), List.of());
     }
 
     private static EvidenceItemResponse toEvidenceItem(Certification c) {
         return new EvidenceItemResponse(
                 c.evidenceId(), "CERTIFICATION", c.name(), c.issuer(), null,
-                List.of(), List.of(), c.issuedOn(), c.expiresOn());
+                List.of(), List.of(), c.issuedOn(), c.expiresOn(), List.of());
     }
 
     private static EvidenceItemResponse toEvidenceItem(Achievement a) {
         return new EvidenceItemResponse(
                 a.evidenceId(), "ACHIEVEMENT", a.title(), null, a.description(),
-                List.of(), List.of(), a.date(), null);
+                List.of(), List.of(), a.date(), null, List.of());
     }
 
     private static ProfileResponse toResponse(Profile profile) {

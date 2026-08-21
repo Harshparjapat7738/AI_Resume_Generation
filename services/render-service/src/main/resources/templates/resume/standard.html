@@ -12,17 +12,77 @@
   <meta charset="UTF-8" />
   <title th:text="${header.fullName() + ' — Resume'}">Resume</title>
   <!--
-    Print-pagination only — no color/typography here, that stays the renderer's/base-font
-    concern. Without this, a page break can fall between one entry's title/meta line and its
-    own bullets (or right after a lone section heading), which reads as content going missing
-    rather than a normal page turn. `page-break-inside: avoid` asks the renderer to keep one
-    entry — or a heading and the first line under it — together when it still fits on a single
-    page; a genuinely long entry that can't fit on one page at all still flows across pages
-    rather than being forced to overflow, since `avoid` is a preference, not a hard constraint.
+    Typography/color here is purely presentational — every rule below is either a font
+    stack (base-14 PDF standard fonts only; nothing here needs an embedded font file) or a
+    color/spacing choice. None of it changes what text exists or its reading order, so it
+    carries no ATS-parsing risk: a parser that strips all styling and linearizes the page
+    sees exactly the same words in exactly the same order either way.
+
+    Pagination: without `page-break-inside`/`page-break-after` below, a page break can fall
+    between one entry's title/meta line and its own bullets (or right after a lone section
+    heading), which reads as content going missing rather than a normal page turn. Both are
+    a preference, not a hard constraint — a genuinely long entry that can't fit on one page
+    at all still flows across pages rather than being forced to overflow.
   -->
   <style>
-    .entry { page-break-inside: avoid; }
-    .resume-section h2 { page-break-after: avoid; }
+    body {
+      font-family: Helvetica, Arial, sans-serif;
+      font-size: 10pt;
+      line-height: 1.4;
+      color: #1f1f1f;
+    }
+    .document-header h1 {
+      font-size: 20pt;
+      letter-spacing: 0.5px;
+      margin: 0 0 2pt;
+    }
+    .contact {
+      color: #444;
+      margin: 0 0 4pt;
+    }
+    .links {
+      list-style: none;
+      padding: 0;
+      margin: 0 0 10pt;
+    }
+    .links li {
+      display: inline;
+      margin-right: 10pt;
+    }
+    .resume-section h2 {
+      font-size: 11pt;
+      text-transform: uppercase;
+      letter-spacing: 1.2px;
+      color: #2c4a6b;
+      border-bottom: 1pt solid #2c4a6b;
+      padding-bottom: 2pt;
+      margin: 12pt 0 6pt;
+      page-break-after: avoid;
+    }
+    .entry {
+      margin-bottom: 8pt;
+      page-break-inside: avoid;
+    }
+    .entry h3 {
+      font-size: 10.5pt;
+      margin: 0;
+      display: inline;
+    }
+    .entry-meta {
+      color: #444;
+      margin: 1pt 0 3pt;
+    }
+    .entry-meta span:first-child {
+      color: #2c4a6b;
+      font-weight: bold;
+    }
+    .bullets {
+      margin: 0;
+      padding-left: 14pt;
+    }
+    .bullets li {
+      margin-bottom: 2pt;
+    }
   </style>
 </head>
 <body>

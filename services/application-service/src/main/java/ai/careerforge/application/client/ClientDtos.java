@@ -89,9 +89,14 @@ public final class ClientDtos {
     /** Mirrors ai-service's {@code EvidenceItem} exactly, so it can be forwarded to
      *  {@code AiServiceClient} unchanged — see {@code GET /api/profile/evidence}. */
     @JsonIgnoreProperties(ignoreUnknown = true)
+    /** {@code bullets} mirrors profile-service's own addition to {@code EvidenceItemResponse}:
+     *  the real, unflattened list backing {@code description} for evidence types that have one
+     *  (only EXPERIENCE today) — {@code description} itself is unchanged, still the single
+     *  flattened blob other consumers of this same client already read. */
     public record EvidenceItem(
             String evidenceId, String type, String title, String organisation, String description,
-            List<String> technologies, List<String> metrics, String startDate, String endDate) {
+            List<String> technologies, List<String> metrics, String startDate, String endDate,
+            List<String> bullets) {
     }
 
     // ---- ai-service -----------------------------------------------------------

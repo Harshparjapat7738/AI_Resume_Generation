@@ -19,6 +19,9 @@ import ai.careerforge.application.domain.Application;
 import ai.careerforge.common.error.ApiException;
 import ai.careerforge.common.error.ErrorCode;
 import feign.FeignException;
+import java.time.YearMonth;
+import java.time.format.DateTimeFormatter;
+import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
@@ -153,11 +156,74 @@ public class ResumeRenderService {
     }
 
     private static RenderSectionEntry toSectionEntry(EvidenceItem item) {
-        List<RenderContentLeaf> bullets = hasText(item.description())
+        return new RenderSectionEntry(item.evidenceId(), displayTitle(item), item.organisation(), null,
+                formatDisplayDate(item.startDate()), formatDisplayDate(item.endDate()), toBullets(item));
+    }
+
+    /** Prefers the evidence type's own real, unflattened bullets list (only EXPERIENCE has one
+     *  today) so each stated achievement stays its own bullet point on the resume, instead of
+     *  falling back to {@code description} — which, for EXPERIENCE, is that same list already
+     *  joined into one run-on line ({@code Experience.description()}'s own Javadoc: "joined for
+     *  the evidence inventory", a shape meant for ai-service's prompting, not a rendered
+     *  layout). Every other evidence type has no separate bullets list, so it keeps using its
+     *  single-sentence description exactly as before. */
+    private static List<RenderContentLeaf> toBullets(EvidenceItem item) {
+        List<String> realBullets = item.bullets();
+        if (realBullets != null && !realBullets.isEmpty()) {
+            return realBullets.stream()
+                    .filter(ResumeRenderService::hasText)
+                    .map(text -> new RenderContentLeaf(text, List.of(item.evidenceId()), "VERBATIM_FROM_PROFILE"))
+                    .toList();
+        }
+        return shouldShowAsBullet(item)
                 ? List.of(new RenderContentLeaf(item.description(), List.of(item.evidenceId()), "VERBATIM_FROM_PROFILE"))
                 : List.of();
-        return new RenderSectionEntry(item.evidenceId(), item.title(), item.organisation(), null,
-                item.startDate(), item.endDate(), bullets);
+    }
+
+    /** A SKILL's "description" is really its proficiency level — profile-service's own mapping
+     *  sets {@code description = s.proficiency()} (e.g. {@code "ADVANCED"}) for skills, real
+     *  data but not candidate-facing prose worth its own bullet under a one-line skill entry.
+     *  Every other evidence type's description is a genuine sentence, so only SKILL is excluded
+     *  here — nothing is hidden that the candidate actually wrote as content. */
+    private static boolean shouldShowAsBullet(EvidenceItem item) {
+        return !"SKILL".equals(item.type()) && hasText(item.description());
+    }
+
+    /** profile-service's own EXPERIENCE mapping bakes the company into the title itself
+     *  ({@code title() + " at " + company()}) on top of also setting {@code organisation()} to
+     *  that same company — sensible context for ai-service's evidence selection, but on a
+     *  rendered resume it prints the company name twice (once in the role line, once again
+     *  right below it). Strips only that exact, deterministic suffix profile-service is known
+     *  to append; a title that doesn't end in exactly that pattern — every other evidence
+     *  type, or an EXPERIENCE entry with no organisation — passes through completely
+     *  unchanged. */
+    private static String displayTitle(EvidenceItem item) {
+        String title = item.title();
+        String organisation = item.organisation();
+        if (title != null && organisation != null) {
+            String suffix = " at " + organisation;
+            if (title.endsWith(suffix)) {
+                return title.substring(0, title.length() - suffix.length());
+            }
+        }
+        return title;
+    }
+
+    /** Reformats a profile-entered "YYYY-MM" date into "Mon YYYY" (e.g. "2021-08" -&gt;
+     *  "Aug 2021") — the conventional resume format, and what most ATS parsers expect in order
+     *  to compute tenure; a raw ISO month gives them nothing. Never fabricates or guesses:
+     *  anything that isn't exactly that shape (a bare year, free text, already-formatted text,
+     *  or {@code null}) is returned completely unchanged rather than risk misreading it — the
+     *  same verbatim-or-nothing rule the rest of this integration follows for content. */
+    private static String formatDisplayDate(String rawDate) {
+        if (rawDate == null) {
+            return null;
+        }
+        try {
+            return YearMonth.parse(rawDate).format(DateTimeFormatter.ofPattern("MMM yyyy", Locale.ENGLISH));
+        } catch (DateTimeParseException ex) {
+            return rawDate;
+        }
     }
 
     /** Reads the JD optimization's own {@code emphasis} ranking (evidenceId -> rank) straight

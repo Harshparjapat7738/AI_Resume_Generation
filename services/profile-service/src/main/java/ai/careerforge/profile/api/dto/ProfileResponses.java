@@ -57,8 +57,21 @@ public final class ProfileResponses {
      * resume-content requests. Every section — education, experience, skills, projects,
      * certifications, achievements — contributes evidence now, not just experience.
      */
+    /**
+     * @param description a single flattened blob (Experience's own {@code description()} joins
+     *                     its bullets with spaces) — kept exactly as before for ai-service's
+     *                     existing evidence-selection/JD-optimization prompting, which wants one
+     *                     consolidated string per item, not a structured list.
+     * @param bullets      the real, unflattened list backing {@code description} when the
+     *                     evidence type actually has one (only Experience today — every other
+     *                     type is empty here, same as before this field existed). Added so a
+     *                     consumer that needs each bullet as its own line (render-service's
+     *                     resume layout) doesn't have to re-split {@code description} by guessing
+     *                     where one bullet ends and the next begins.
+     */
     public record EvidenceItemResponse(
             String evidenceId, String type, String title, String organisation, String description,
-            List<String> technologies, List<String> metrics, String startDate, String endDate) {
+            List<String> technologies, List<String> metrics, String startDate, String endDate,
+            List<String> bullets) {
     }
 }

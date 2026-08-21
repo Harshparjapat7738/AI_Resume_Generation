@@ -1,5 +1,6 @@
 package ai.careerforge.ai.api.dto;
 
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Pattern;
 import java.util.List;
@@ -10,6 +11,14 @@ import java.util.List;
  * <p>The {@code evidenceId} is immutable and is the anchor for the whole anti-fabrication
  * mechanism: the model may only cite these ids, and every generated sentence is checked
  * back against the text of the items it cites.
+ *
+ * <p>{@code @JsonIgnoreProperties(ignoreUnknown = true)} — the same convention every mirror DTO
+ * in this codebase follows (ADR-006: no shared DTO module, only an agreed JSON shape): a caller
+ * (jd-service, application-service) building this from its own copy of profile-service's
+ * evidence is free to carry extra fields that shape doesn't need here (e.g. application-service
+ * added a {@code bullets} field for its own resume-rendering use) without this record's own
+ * {@code @Valid} request binding rejecting the request over an unrecognised property it was
+ * never going to read anyway.
  *
  * @param evidenceId   stable id, e.g. {@code EXP-004}
  * @param type         EXPERIENCE · PROJECT · SKILL · CERTIFICATION · EDUCATION · ACHIEVEMENT
@@ -22,6 +31,7 @@ import java.util.List;
  * @param startDate    ISO date or year
  * @param endDate      ISO date, year, or "Present"
  */
+@JsonIgnoreProperties(ignoreUnknown = true)
 public record EvidenceItem(
         @NotBlank @Pattern(regexp = "^(EXP|PROJ|SKILL|CERT|EDU|ACH)-[0-9]{3,4}$")
         String evidenceId,

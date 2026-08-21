@@ -104,7 +104,7 @@ class EmailGenerationServiceTest {
 
     private EvidenceItem sampleEvidence() {
         return new EvidenceItem("EXP-004", "EXPERIENCE", "Backend Engineer", "Initech",
-                "Built services.", List.of("Java"), List.of("1500 users"), "2021", "Present");
+                "Built services.", List.of("Java"), List.of("1500 users"), "2021", "Present", List.of("Built services."));
     }
 
     private EmailContentResponse aiResponse(String bodyText, String closingText) throws Exception {
