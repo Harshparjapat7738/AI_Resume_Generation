@@ -3,6 +3,7 @@ package ai.careerforge.application.client;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.databind.JsonNode;
 import java.util.List;
+import java.util.Map;
 
 /**
  * Local mirrors of the DTOs owned by jd-service and assessment-service. Each
@@ -38,6 +39,17 @@ public final class ClientDtos {
             List<String> keywords, List<RequirementDto> requirements) {
     }
 
+    /** Mirrors jd-service's {@code JdOptimizationResponse} (ADR-033) — {@code optimisation} is
+     *  republished verbatim, opaque JSON application-service does not interpret beyond reading
+     *  its own {@code emphasis} ranking (see {@code ResumeRenderService}); {@code
+     *  citedEvidenceIds} is the provenance trail proving every candidate-facing value traces
+     *  back to the caller's own profile. */
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public record JdOptimizationDto(
+            String id, String jobDescriptionId, Map<String, Object> optimisation,
+            List<String> citedEvidenceIds, java.time.Instant createdAt) {
+    }
+
     // ---- resume-service ---------------------------------------------------------
 
     /** Only the fields application-service actually reads from {@code GET /api/resumes/{id}}. */
@@ -61,10 +73,13 @@ public final class ClientDtos {
 
     // ---- profile-service --------------------------------------------------------
 
-    /** Only the field application-service reads from {@code GET /api/profile} — the
-     *  candidate's own stated name for the email sign-off (never invented, ADR-019). */
+    /** The candidate's own stated identity fields application-service reads from
+     *  {@code GET /api/profile} — {@code fullName} for the email sign-off (never invented,
+     *  ADR-019), the rest for the resume-render document header (ADR-036). Never invented,
+     *  never evidence-backed — see {@code render-service}'s own {@code DocumentHeader} Javadoc
+     *  on why identity data carries no {@code evidenceId}. */
     @JsonIgnoreProperties(ignoreUnknown = true)
-    public record PersonalInformationDto(String fullName) {
+    public record PersonalInformationDto(String fullName, String email, String phone, List<String> links) {
     }
 
     @JsonIgnoreProperties(ignoreUnknown = true)
@@ -108,5 +123,62 @@ public final class ClientDtos {
 
     public record CoverLetterContentResponse(JsonNode content, JsonNode grounding,
                                              List<String> removedParagraphs, JsonNode provenance) {
+    }
+
+    // ---- render-service (ADR-036) -------------------------------------------------
+
+    /**
+     * application-service's own client-side copy of render-service's {@code ResumeRenderRequest}
+     * contract (ADR-006: no shared DTO module — the field shapes agree by convention, not by
+     * import). {@code template}/{@code outputFormat} are plain strings rather than a shared enum
+     * for the same reason: {@code "STANDARD"}/{@code "PDF"} is the entire allowlist either side
+     * needs to agree on today, and a plain string round-trips identically to how Jackson already
+     * serialises an enum constant by default.
+     */
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public record ResumeRenderRequest(
+            String schemaVersion, String template, String outputFormat, RenderDocumentHeader header,
+            RenderContentLeaf summary, List<RenderResumeSection> sections, RenderHints renderHints) {
+    }
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public record RenderDocumentHeader(
+            String fullName, String email, String phone, String location, List<RenderHeaderLink> links) {
+    }
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public record RenderHeaderLink(String label, String url) {
+    }
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public record RenderResumeSection(String heading, List<RenderSectionEntry> entries) {
+    }
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public record RenderSectionEntry(
+            String evidenceId, String title, String organisation, String location,
+            String startDate, String endDate, List<RenderContentLeaf> bullets) {
+    }
+
+    /** {@code origin} mirrors render-service's {@code ContentOrigin} enum as a plain string —
+     *  this integration only ever sends {@code "VERBATIM_FROM_PROFILE"} (see
+     *  {@code ResumeRenderService}'s own Javadoc: no AI call, no rephrasing). */
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public record RenderContentLeaf(String text, List<String> evidenceIds, String origin) {
+    }
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public record RenderHints(String pageSize, int maxPages, String fontFamily, String accentColorHex) {
+    }
+
+    /** Only the fields this integration reads from render-service's {@code RenderResponse} —
+     *  {@code document}'s own metadata (page count, size, etc.) is render-service's concern,
+     *  not application-service's; {@code @JsonIgnoreProperties} lets it ride along unread. */
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public record RenderResponse(String status, byte[] pdfBytes, List<RenderError> errors) {
+    }
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public record RenderError(String code, String message) {
     }
 }

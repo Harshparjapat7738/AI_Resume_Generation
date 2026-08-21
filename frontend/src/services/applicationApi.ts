@@ -3,7 +3,7 @@
  * ARCHITECTURE_DECISIONS.md ADR-017 (the central `Application` aggregate) / ADR-019 (email
  * generation) / ADR-020 (cover-letter generation).
  */
-import { apiFetch } from './apiClient';
+import { apiFetch, apiFetchBlob } from './apiClient';
 
 export type GenerationType = 'RESUME_ONLY' | 'COVER_LETTER_ONLY' | 'EMAIL_ONLY' | 'ALL';
 export type ApplicationStatus = 'DRAFT' | 'PROCESSING' | 'COMPLETED' | 'FAILED';
@@ -199,4 +199,15 @@ export function listApplications(status?: ApplicationStatus, page = 0, size = 20
   const params = new URLSearchParams({ page: String(page), size: String(size) });
   if (status) params.set('status', status);
   return apiFetch<Page<ApplicationSummary>>(`/api/applications?${params.toString()}`);
+}
+
+/**
+ * Renders this application's resume as a PDF right now, from the job's current JD optimization
+ * and the candidate's current profile evidence (ADR-036's minimal integration — see
+ * application-service's `ResumeRenderService`: deterministic assembly, no AI call, no
+ * rephrasing). Nothing is persisted on either side, so every call re-renders from scratch —
+ * there is no version to fetch back later the way `getEmail` reads a persisted one.
+ */
+export function renderResumePdf(applicationId: string): Promise<Blob> {
+  return apiFetchBlob(`/api/applications/${applicationId}/resume/render`, { method: 'POST' });
 }

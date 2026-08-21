@@ -149,7 +149,7 @@ class EmailGenerationServiceTest {
             Application all = new Application(USER_ID, "jd-1", "Backend Engineer", "Acme", GenerationType.ALL, null);
             when(applications.findByIdAndUserId(APP_ID, USER_ID)).thenReturn(Optional.of(all));
             when(profileServiceClient.getEvidence()).thenReturn(List.of(sampleEvidence()));
-            when(profileServiceClient.getProfile()).thenReturn(new ProfileDto(new PersonalInformationDto("Jane Doe")));
+            when(profileServiceClient.getProfile()).thenReturn(new ProfileDto(new PersonalInformationDto("Jane Doe", null, null, List.of())));
             when(aiServiceClient.generateEmailContent(any()))
                     .thenReturn(aiResponse("I have led backend systems.", "My resume is attached."));
 
@@ -207,7 +207,7 @@ class EmailGenerationServiceTest {
         void subjectIsBuiltDeterministicallyFromTheApplicationsJobAndCompany() throws Exception {
             when(profileServiceClient.getEvidence()).thenReturn(List.of(sampleEvidence()));
             when(profileServiceClient.getProfile())
-                    .thenReturn(new ProfileDto(new PersonalInformationDto("Jane Doe")));
+                    .thenReturn(new ProfileDto(new PersonalInformationDto("Jane Doe", null, null, List.of())));
             when(aiServiceClient.generateEmailContent(any()))
                     .thenReturn(aiResponse("I have led backend systems.", "My resume is attached."));
 
@@ -220,7 +220,7 @@ class EmailGenerationServiceTest {
         void bodyIncludesTheGroundedParagraphsAndTheCandidatesRealSignature() throws Exception {
             when(profileServiceClient.getEvidence()).thenReturn(List.of(sampleEvidence()));
             when(profileServiceClient.getProfile())
-                    .thenReturn(new ProfileDto(new PersonalInformationDto("Jane Doe")));
+                    .thenReturn(new ProfileDto(new PersonalInformationDto("Jane Doe", null, null, List.of())));
             when(aiServiceClient.generateEmailContent(any()))
                     .thenReturn(aiResponse("I have led backend systems.", "My resume is attached."));
 
@@ -238,7 +238,7 @@ class EmailGenerationServiceTest {
         void missingCandidateNameOmitsTheSignatureRatherThanInventingOne() throws Exception {
             when(profileServiceClient.getEvidence()).thenReturn(List.of(sampleEvidence()));
             when(profileServiceClient.getProfile())
-                    .thenReturn(new ProfileDto(new PersonalInformationDto(null)));
+                    .thenReturn(new ProfileDto(new PersonalInformationDto(null, null, null, List.of())));
             when(aiServiceClient.generateEmailContent(any()))
                     .thenReturn(aiResponse("I have led backend systems.", "My resume is attached."));
 
@@ -253,7 +253,7 @@ class EmailGenerationServiceTest {
         void fallsBackWhenAParagraphWasRemoved() throws Exception {
             when(profileServiceClient.getEvidence()).thenReturn(List.of(sampleEvidence()));
             when(profileServiceClient.getProfile())
-                    .thenReturn(new ProfileDto(new PersonalInformationDto("Jane Doe")));
+                    .thenReturn(new ProfileDto(new PersonalInformationDto("Jane Doe", null, null, List.of())));
             ObjectMapper mapper = new ObjectMapper();
             String json = """
                     {
@@ -280,7 +280,7 @@ class EmailGenerationServiceTest {
         void attachesTheNewEmailToTheApplication() throws Exception {
             when(profileServiceClient.getEvidence()).thenReturn(List.of(sampleEvidence()));
             when(profileServiceClient.getProfile())
-                    .thenReturn(new ProfileDto(new PersonalInformationDto("Jane Doe")));
+                    .thenReturn(new ProfileDto(new PersonalInformationDto("Jane Doe", null, null, List.of())));
             when(aiServiceClient.generateEmailContent(any()))
                     .thenReturn(aiResponse("I have led backend systems.", "My resume is attached."));
 
@@ -294,7 +294,7 @@ class EmailGenerationServiceTest {
         void regeneratingIncrementsTheVersionAndKeepsThePreviousOneUntouched() throws Exception {
             when(profileServiceClient.getEvidence()).thenReturn(List.of(sampleEvidence()));
             when(profileServiceClient.getProfile())
-                    .thenReturn(new ProfileDto(new PersonalInformationDto("Jane Doe")));
+                    .thenReturn(new ProfileDto(new PersonalInformationDto("Jane Doe", null, null, List.of())));
             when(aiServiceClient.generateEmailContent(any()))
                     .thenReturn(aiResponse("I have led backend systems.", "My resume is attached."));
 

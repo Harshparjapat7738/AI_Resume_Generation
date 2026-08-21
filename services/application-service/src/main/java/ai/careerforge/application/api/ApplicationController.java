@@ -16,11 +16,13 @@ import ai.careerforge.application.domain.ApplicationStatusHistory;
 import ai.careerforge.application.domain.EmailContent;
 import ai.careerforge.application.service.ApplicationService;
 import ai.careerforge.application.service.EmailGenerationService;
+import ai.careerforge.application.service.ResumeRenderService;
 import ai.careerforge.common.security.CallerId;
 import jakarta.validation.Valid;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
@@ -47,11 +49,14 @@ public class ApplicationController {
 
     private final ApplicationService applicationService;
     private final EmailGenerationService emailGenerationService;
+    private final ResumeRenderService resumeRenderService;
 
     public ApplicationController(ApplicationService applicationService,
-                                 EmailGenerationService emailGenerationService) {
+                                 EmailGenerationService emailGenerationService,
+                                 ResumeRenderService resumeRenderService) {
         this.applicationService = applicationService;
         this.emailGenerationService = emailGenerationService;
+        this.resumeRenderService = resumeRenderService;
     }
 
     @PostMapping
@@ -68,6 +73,28 @@ public class ApplicationController {
             @CallerId String userId, @PathVariable String id, @Valid @RequestBody AttachResumeRequest request) {
         Application application = applicationService.attachResume(userId, id, request.resumeVersionId());
         return ResponseEntity.ok(toResponse(application));
+    }
+
+    /**
+     * Renders this application's resume as a PDF, right now, connecting the JD's optimization
+     * (jd-service, ADR-033) to render-service's rendering pipeline (ADR-036). Synchronous, and
+     * not persisted — render-service does not yet store what it renders, so calling this again
+     * simply renders again from whatever the JD optimization and profile currently say; there
+     * is no version to attach the way {@link #attachResume} attaches an externally-generated one.
+     *
+     * <p>Deliberately no {@code produces = APPLICATION_PDF_VALUE} on the mapping itself — every
+     * frontend call through {@code apiClient.ts} sends a blanket {@code Accept: application/json}
+     * (it doesn't know ahead of time which endpoints return binary), and restricting
+     * {@code produces} here would make Spring's content negotiation reject that as
+     * {@code HttpMediaTypeNotAcceptableException} before this method ever runs — exactly the
+     * failure mode profile-service's own {@code TemplateController.download} avoids the same
+     * way. The actual response content type is still set correctly below, via the
+     * {@code ResponseEntity} itself.
+     */
+    @PostMapping("/{id}/resume/render")
+    public ResponseEntity<byte[]> renderResume(@CallerId String userId, @PathVariable String id) {
+        byte[] pdf = resumeRenderService.renderResumePdf(userId, id);
+        return ResponseEntity.ok().contentType(MediaType.APPLICATION_PDF).body(pdf);
     }
 
     @GetMapping("/{id}")

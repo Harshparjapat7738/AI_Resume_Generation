@@ -7,6 +7,7 @@ import { describeError, ErrorBanner } from '@/components/ui/ErrorBanner';
 import { FullScreenSpinner } from '@/components/ui/FullScreenSpinner';
 import { Select } from '@/components/ui/Select';
 import { showToast } from '@/components/ui/toast';
+import { createApplication, renderResumePdf } from '@/services/applicationApi';
 import { DashboardShell } from '@/features/dashboard/components/DashboardShell';
 import { CopyIcon, DownloadIcon, SparkleIcon } from '@/features/dashboard/icons';
 import { getAnalysis, getJdOptimization, type OptimizationData } from '@/services/jdApi';
@@ -57,6 +58,11 @@ export function OptimizationResultPage() {
   // '' means "no template selected" — a real select value, never undefined, so the <select>
   // stays a controlled component from the first render.
   const [selectedTemplateId, setSelectedTemplateId] = useState('');
+  // Resume PDF generation is neither persisted nor idempotent-by-id (render-service stores
+  // nothing — see ResumeRenderService's Javadoc), so the Application created for it is kept
+  // here and reused for a re-click instead of creating a fresh one every time.
+  const [resumeApplicationId, setResumeApplicationId] = useState<string | null>(null);
+  const [generatingResume, setGeneratingResume] = useState(false);
 
   const optimizationQuery = useQuery({
     queryKey: ['jd-optimization', jdId],
@@ -103,6 +109,40 @@ export function OptimizationResultPage() {
   });
 
   const profileQuery = useQuery({ queryKey: ['profile'], queryFn: getProfile });
+
+  /**
+   * Builds a RESUME_ONLY application for this JD (or reuses the one already created this
+   * visit) and renders it through application-service's `POST /{id}/resume/render` (ADR-036's
+   * minimal integration: deterministic assembly from cited evidence, no AI call, no
+   * rephrasing). Nothing is persisted on either side, so this can be clicked again any time
+   * the optimization or profile has changed and it will re-render from scratch. templateId is
+   * deliberately not passed: render-service has exactly one built-in layout today regardless
+   * of which template is selected here, and passing one would also send it through
+   * ApplicationService.create's template-existence check against a since-removed service.
+   */
+  const generateResumePdf = async () => {
+    setGeneratingResume(true);
+    try {
+      let applicationId = resumeApplicationId;
+      if (!applicationId) {
+        const application = await createApplication(jdId, 'RESUME_ONLY');
+        applicationId = application.id;
+        setResumeApplicationId(applicationId);
+      }
+      const blob = await renderResumePdf(applicationId);
+      const url = URL.createObjectURL(blob);
+      const link = window.document.createElement('a');
+      link.href = url;
+      link.download = 'careerforge-resume.pdf';
+      link.click();
+      URL.revokeObjectURL(url);
+      showToast('Resume PDF generated.');
+    } catch (error) {
+      showToast(describeError(error));
+    } finally {
+      setGeneratingResume(false);
+    }
+  };
 
   const requirementText = useMemo(() => {
     const map = new Map<string, string>();
@@ -280,6 +320,21 @@ export function OptimizationResultPage() {
                   </Link>
                 </div>
               )}
+            </Card>
+
+            {/* Resume PDF (ADR-036's minimal integration) ---------------------- */}
+            <Card>
+              <h2 className="text-sm font-semibold text-ink">Generate your resume PDF</h2>
+              <p className="mt-1.5 text-sm text-ink-muted">
+                Builds a PDF straight from this optimization's cited evidence and your profile —
+                no AI rephrasing, every line verbatim from what you entered.
+              </p>
+              <div className="mt-4">
+                <Button variant="primary" onClick={generateResumePdf} loading={generatingResume}>
+                  <DownloadIcon className="h-4 w-4" />
+                  Generate Resume PDF
+                </Button>
+              </div>
             </Card>
 
             {/* Keywords ------------------------------------------------------ */}
