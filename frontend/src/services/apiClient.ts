@@ -126,14 +126,54 @@ function buildHeaders(init: RequestInit): Headers {
   return headers;
 }
 
-function errorBodyFallback(path: string, status: number): ApiErrorBody {
+/**
+ * Built only when the server's response body isn't the expected JSON error envelope — which
+ * never happens for a request that actually reached one of our own services (every one of them
+ * always answers through platform-common's GlobalExceptionHandler, JSON, guaranteed). Seeing
+ * this fallback at all is itself the diagnostic: something else answered instead — a dev-server
+ * proxy, a corporate/school network filter or antivirus doing HTTP inspection, a captive portal,
+ * or a load balancer's own error page. `code` names that distinction explicitly rather than the
+ * old generic "unknown", and the message carries the one clue that actually narrows it down: what
+ * shape of thing responded, and a safe preview of it — never the guess "request failed" with
+ * nothing to act on.
+ */
+function errorBodyFallback(path: string, status: number, contentType: string | null, rawText: string): ApiErrorBody {
+  const preview = rawText
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 200);
+  const previewSuffix = rawText.length > 200 ? '…' : '';
+
+  const hint = /html/i.test(contentType ?? '')
+    ? ' The response was an HTML page, not JSON — almost always a proxy, security software, or a captive-portal page intercepting the request rather than this app\'s own server responding.'
+    : rawText.trim() === ''
+      ? ' The response body was empty.'
+      : '';
+
   return {
     timestamp: new Date().toISOString(),
     status,
-    code: 'UNKNOWN_ERROR',
-    message: 'Request failed.',
+    code: 'NON_JSON_RESPONSE',
+    message: `Server responded with status ${status}, but the body wasn't the expected JSON`
+      + ` (content-type: ${contentType ?? 'none'}).${hint}`
+      + (preview ? ` Response preview: "${preview}${previewSuffix}"` : ''),
     path,
   };
+}
+
+/** Reads the response body as text once, then tries to parse it as JSON — unlike calling
+ *  `response.json()` directly, a parse failure here still leaves the raw text (and content
+ *  type) available for {@link errorBodyFallback} instead of being silently discarded. */
+async function parseJsonBody(response: Response): Promise<{ payload: unknown; rawText: string }> {
+  const rawText = await response.text();
+  if (rawText === '') {
+    return { payload: null, rawText };
+  }
+  try {
+    return { payload: JSON.parse(rawText), rawText };
+  } catch {
+    return { payload: null, rawText };
+  }
 }
 
 export async function apiFetch<T>(path: string, init: RequestInit = {}): Promise<T> {
@@ -153,10 +193,14 @@ export async function apiFetch<T>(path: string, init: RequestInit = {}): Promise
 
   if (response.status === 204) return undefined as T;
 
-  const payload: unknown = await response.json().catch(() => null);
+  const { payload, rawText } = await parseJsonBody(response);
 
   if (!response.ok) {
-    throw new ApiError(response.status, (payload as ApiErrorBody) ?? errorBodyFallback(path, response.status));
+    throw new ApiError(
+      response.status,
+      (payload as ApiErrorBody | null) ??
+        errorBodyFallback(path, response.status, response.headers.get('content-type'), rawText),
+    );
   }
 
   return payload as T;
@@ -184,8 +228,12 @@ export async function apiFetchBlob(path: string, init: RequestInit = {}): Promis
   }
 
   if (!response.ok) {
-    const payload: unknown = await response.json().catch(() => null);
-    throw new ApiError(response.status, (payload as ApiErrorBody) ?? errorBodyFallback(path, response.status));
+    const { payload, rawText } = await parseJsonBody(response);
+    throw new ApiError(
+      response.status,
+      (payload as ApiErrorBody | null) ??
+        errorBodyFallback(path, response.status, response.headers.get('content-type'), rawText),
+    );
   }
 
   return response.blob();
