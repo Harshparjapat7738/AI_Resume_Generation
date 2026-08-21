@@ -33,10 +33,13 @@ if (Test-Path $pidFile) {
     Remove-Item $pidFile -Force
 }
 
-# Fallback: free any CareerForge port still held.
+# Fallback: free any CareerForge port still held. -ErrorAction SilentlyContinue here
+# specifically: Get-NetTCPConnection's CIM query throws a (non-terminating, but still
+# console-printed) error when a port simply isn't in use — normal for most of these ports
+# most of the time, not a real failure, so it's silenced rather than left to alarm the reader.
 $ports = 8080, 8081, 8082, 8083, 8084, 8085, 8086, 8087, 8088, 8761, 8888
 foreach ($port in $ports) {
-    Get-NetTCPConnection -LocalPort $port -State Listen | ForEach-Object {
+    Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue | ForEach-Object {
         Stop-Process -Id $_.OwningProcess -Force
         Write-Host "Freed port $port" -ForegroundColor Yellow
         $stopped++
