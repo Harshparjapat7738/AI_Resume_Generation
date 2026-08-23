@@ -65,7 +65,7 @@ class JdOptimizationServiceTest {
         StringRedisTemplate unreachableRedis = mock(StringRedisTemplate.class);
         service = new JdOptimizationService(jdService, profileServiceClient, aiServiceClient,
                 optimizations, new ObjectMapper(), new EvidenceMatcher(), new OptimizationMerge(),
-                new SingleFlightLock(unreachableRedis));
+                new SingleFlightLock(unreachableRedis, new io.micrometer.core.instrument.simple.SimpleMeterRegistry()));
 
         JdAnalysis analysis = new JdAnalysis(JD_ID, JD_VERSION_ID, "Backend Engineer", "Acme", "Senior",
                 List.of("Java", "Kafka"),
@@ -114,6 +114,49 @@ class JdOptimizationServiceTest {
         service.optimise(USER_ID, JD_ID, false);
 
         verify(aiServiceClient, times(1)).optimise(any());
+    }
+
+    @Test
+    @DisplayName("ADR-038: with the analysis already warm and no cached optimization, exactly one "
+            + "adjudication call is made — not zero, not two")
+    void warmAnalysisNoCachedOptimizationMakesExactlyOneAdjudicationCall() throws Exception {
+        // jdService is mocked, so JdService#analyse's own cache-through (proven separately in
+        // JdServiceTest) is not re-exercised here — from this class's perspective, "warm
+        // analysis" simply means analyse() already returned without this class spending a call
+        // on it. What this class controls, and what this test asserts, is that exactly one
+        // adjudication call follows.
+        aiReturns("""
+                {"matches":[{"requirementId":"REQ-001","evidenceIds":["EXP-004"],"matchKind":"STRONG"}]}""");
+
+        service.optimise(USER_ID, JD_ID, false);
+
+        verify(aiServiceClient, times(1)).optimise(any());
+        verify(optimizations, times(1)).save(any());
+    }
+
+    @Test
+    @DisplayName("ADR-038: only the deterministically filtered evidence subset reaches ai-service, never the full inventory")
+    void onlyFilteredEvidenceReachesAiService() throws Exception {
+        // 6 items: 1 lexically relevant to REQ-001 ("Java"), 5 not (unrelated skills).
+        List<EvidenceItem> fullInventory = new java.util.ArrayList<>();
+        fullInventory.add(new EvidenceItem("EXP-004", "EXPERIENCE", "Backend Engineer", "Acme",
+                "Built Java services.", List.of("Java"), List.of(), "2019", "Present"));
+        for (int i = 0; i < 5; i++) {
+            fullInventory.add(new EvidenceItem("SKILL-00" + i, "SKILL", "Watercolor painting " + i,
+                    null, "Portrait painting", List.of(), List.of(), null, null));
+        }
+        when(profileServiceClient.getEvidence()).thenReturn(fullInventory);
+        aiReturns("""
+                {"matches":[{"requirementId":"REQ-001","evidenceIds":["EXP-004"],"matchKind":"STRONG"}]}""");
+
+        service.optimise(USER_ID, JD_ID, false);
+
+        var captor = org.mockito.ArgumentCaptor.forClass(JdOptimizationRequest.class);
+        verify(aiServiceClient).optimise(captor.capture());
+        List<EvidenceItem> sent = captor.getValue().evidence();
+        assertThat(sent).hasSizeLessThan(fullInventory.size());
+        assertThat(sent).extracting(EvidenceItem::evidenceId).contains("EXP-004")
+                .doesNotContain("SKILL-000", "SKILL-001", "SKILL-002", "SKILL-003", "SKILL-004");
     }
 
     @Test

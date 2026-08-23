@@ -123,6 +123,27 @@ class OptimizationMergeTest {
     }
 
     @Test
+    void mergeIsDeterministic_sameInputTwiceProducesEqualOutput() throws Exception {
+        Requirement strongReq = new Requirement("REQ-001", "Java", "HARD_REQUIRED", 5, List.of("Java"));
+        Requirement weakReq = new Requirement("REQ-002", "Kafka", "PREFERRED", 1, List.of("Kafka"));
+        var matches = mapper.readTree("""
+                {"matches":[
+                  {"requirementId":"REQ-001","evidenceIds":["EXP-004"],"matchKind":"STRONG"},
+                  {"requirementId":"REQ-002","evidenceIds":["EXP-005"],"matchKind":"PARTIAL"}
+                ]}""").path("matches");
+        EvidenceItem e1 = new EvidenceItem("EXP-004", "EXPERIENCE", "Backend Engineer", "Acme",
+                "Built Java services", List.of("Java"), List.of(), "2019", "Present");
+        EvidenceItem e2 = new EvidenceItem("EXP-005", "EXPERIENCE", "Kafka work", "Acme",
+                "Kafka pipelines", List.of("Kafka"), List.of(), "2017", "2019");
+        JdAnalysis analysis = analysis(List.of(strongReq, weakReq), List.of("Java", "Kafka"));
+
+        Map<String, Object> first = merge.merge(analysis, matches, Set.of(), List.of(e1, e2));
+        Map<String, Object> second = merge.merge(analysis, matches, Set.of(), List.of(e1, e2));
+
+        assertThat(first).isEqualTo(second);
+    }
+
+    @Test
     void targetRoleAndCompanyComeStraightFromAnalysisNotFromAnyLlmCall() {
         Requirement req = new Requirement("REQ-001", "Java", "HARD_REQUIRED", 5, List.of("Java"));
 

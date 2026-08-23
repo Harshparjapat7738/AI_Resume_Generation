@@ -1,5 +1,6 @@
 package ai.careerforge.jd.service;
 
+import io.micrometer.core.instrument.MeterRegistry;
 import java.time.Duration;
 import java.util.Optional;
 import java.util.UUID;
@@ -30,9 +31,11 @@ public class SingleFlightLock {
     private static final Duration POLL_INTERVAL = Duration.ofMillis(400);
 
     private final StringRedisTemplate redis;
+    private final MeterRegistry meterRegistry;
 
-    public SingleFlightLock(StringRedisTemplate redis) {
+    public SingleFlightLock(StringRedisTemplate redis, MeterRegistry meterRegistry) {
         this.redis = redis;
+        this.meterRegistry = meterRegistry;
     }
 
     /**
@@ -58,6 +61,7 @@ public class SingleFlightLock {
         try {
             acquired = redis.opsForValue().setIfAbsent(key, token, lockTtl);
         } catch (Exception redisUnavailable) {
+            meterRegistry.counter("careerforge.singleflight.redis_unavailable", "phase", "acquire").increment();
             log.warn("Single-flight lock unavailable (Redis unreachable?) — proceeding without "
                     + "coalescing: {}", redisUnavailable.getMessage());
             return compute.get();
@@ -65,6 +69,15 @@ public class SingleFlightLock {
 
         if (Boolean.TRUE.equals(acquired)) {
             try {
+                // Double-checked: a caller who arrives just after a previous holder released the
+                // key (its computation already finished and persisted) would otherwise acquire a
+                // fresh lock and redundantly recompute — the exact duplicate execution this class
+                // exists to prevent, just outside the "someone else is holding it" window rather
+                // than inside it. One cheap re-check closes that gap.
+                Optional<T> alreadyDone = checkIfAlreadyDone.get();
+                if (alreadyDone.isPresent()) {
+                    return alreadyDone.get();
+                }
                 return compute.get();
             } finally {
                 releaseIfOwned(key, token);
@@ -97,6 +110,7 @@ public class SingleFlightLock {
                 redis.delete(key);
             }
         } catch (Exception redisUnavailable) {
+            meterRegistry.counter("careerforge.singleflight.redis_unavailable", "phase", "release").increment();
             log.warn("Could not release single-flight lock key={}: {}", key, redisUnavailable.getMessage());
         }
     }
