@@ -26,6 +26,22 @@ public final class AiClientDtos {
             String evidenceId, String type, String title, String organisation, String description,
             java.util.List<String> technologies, java.util.List<String> metrics,
             String startDate, String endDate) {
+
+        /** Everything this item asserts, as one lower-cased searchable string — used only for
+         *  jd-service's own deterministic lexical filtering/ranking (ADR-038), never sent
+         *  anywhere; mirrors ai-service's identically-named method on its own copy of this
+         *  shape. */
+        public String searchableText() {
+            String joined = String.join(" ",
+                    nullToEmpty(title), nullToEmpty(organisation), nullToEmpty(description),
+                    String.join(" ", technologies == null ? java.util.List.of() : technologies),
+                    String.join(" ", metrics == null ? java.util.List.of() : metrics));
+            return joined.toLowerCase(java.util.Locale.ROOT);
+        }
+
+        private static String nullToEmpty(String value) {
+            return value == null ? "" : value;
+        }
     }
 
     public record RequirementInput(String requirementId, String text, String type, int weight) {

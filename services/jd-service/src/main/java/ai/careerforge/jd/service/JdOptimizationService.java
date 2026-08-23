@@ -11,54 +11,70 @@ import ai.careerforge.jd.client.ProfileServiceClient;
 import ai.careerforge.jd.domain.JdAnalysis;
 import ai.careerforge.jd.domain.JdOptimization;
 import ai.careerforge.jd.domain.JobDescription;
+import ai.careerforge.jd.domain.Requirement;
 import ai.careerforge.jd.repository.JdOptimizationRepository;
-import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.node.ArrayNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import feign.FeignException;
-import java.util.ArrayList;
-import java.util.LinkedHashSet;
+import java.time.Duration;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 /**
- * Orchestrates JD optimization (ADR-033): JD analysis (against the JD's current text — no
- * confirm step, ADR-037) + verified evidence &rarr; ai-service &rarr; persisted
- * {@link JdOptimization}. The successor to resume-service's generation orchestration, and
- * deliberately the same shape — resolve inputs, make one AI call, persist the validated result —
- * minus the two-stage content pipeline, because there is no content to write.
+ * Orchestrates JD optimization (ADR-033, restructured by ADR-038): JD analysis (against the
+ * JD's current text — no confirm step, ADR-037) + deterministically pre-filtered evidence &rarr;
+ * one adjudication call to ai-service &rarr; deterministic merge &rarr; persisted
+ * {@link JdOptimization}.
+ *
+ * <p><strong>Call budget (ADR-038):</strong> at most 2 Groq calls for a first-time ("cold")
+ * optimization of a JD that hasn't been analysed before (analysis + adjudication), exactly 1 for
+ * a "warm" one (analysis already cached, only adjudication runs), and — when every requirement
+ * turns out to have no plausible evidence candidate at all — 0, since there is nothing left for
+ * an adjudication call to judge. Re-checking after a profile edit ({@code refresh=true}) never
+ * re-runs analysis (unaffected by an evidence change) and reuses the exact same path. Adding one
+ * missing skill from the Skill Gap screen costs 0 Groq calls — see {@link #patchWithLatestEvidence}.
  *
  * <p>Lives in jd-service because everything it needs is already here: the job description, its
  * ownership check, and its cached analysis. The only new dependency is profile-service for the
  * evidence inventory. Nothing about the JD or the profile is copied into the stored result — see
  * {@link JdOptimization}.
- *
- * <p>Runs synchronously inside the request, matching how JD analysis and (formerly) resume
- * generation already behaved (ADR-013): one Groq call, typically single-digit seconds.
  */
 @Service
 public class JdOptimizationService {
 
     private static final Logger log = LoggerFactory.getLogger(JdOptimizationService.class);
+    private static final Duration LOCK_TTL = Duration.ofSeconds(45);
+    private static final Duration LOCK_POLL_TIMEOUT = Duration.ofSeconds(30);
 
     private final JdService jdService;
     private final ProfileServiceClient profileServiceClient;
     private final AiServiceClient aiServiceClient;
     private final JdOptimizationRepository optimizations;
     private final ObjectMapper objectMapper;
+    private final EvidenceMatcher evidenceMatcher;
+    private final OptimizationMerge optimizationMerge;
+    private final SingleFlightLock singleFlightLock;
 
     public JdOptimizationService(JdService jdService, ProfileServiceClient profileServiceClient,
                                  AiServiceClient aiServiceClient, JdOptimizationRepository optimizations,
-                                 ObjectMapper objectMapper) {
+                                 ObjectMapper objectMapper, EvidenceMatcher evidenceMatcher,
+                                 OptimizationMerge optimizationMerge, SingleFlightLock singleFlightLock) {
         this.jdService = jdService;
         this.profileServiceClient = profileServiceClient;
         this.aiServiceClient = aiServiceClient;
         this.optimizations = optimizations;
         this.objectMapper = objectMapper;
+        this.evidenceMatcher = evidenceMatcher;
+        this.optimizationMerge = optimizationMerge;
+        this.singleFlightLock = singleFlightLock;
     }
 
     /**
@@ -87,39 +103,153 @@ public class JdOptimizationService {
             }
         }
 
-        List<RequirementInput> requirements = analysis.requirements() == null ? List.of()
-                : analysis.requirements().stream()
-                        .map(r -> new RequirementInput(r.requirementId(), r.text(), r.type(), r.weight()))
-                        .toList();
-        if (requirements.isEmpty()) {
+        if (analysis.requirements().isEmpty()) {
             throw new ApiException(ErrorCode.VALIDATION_ERROR,
                     "This job description has no extracted requirements to optimise against.");
         }
-
         List<EvidenceItem> evidence = fetchEvidence();
         if (evidence.isEmpty()) {
             throw new ApiException(ErrorCode.VALIDATION_ERROR,
                     "Add at least one experience to your profile before optimising for a job.");
         }
 
-        JdOptimizationResponse response = callAi(new JdOptimizationRequest(
-                analysis.title(), analysis.company(), analysis.seniority(),
-                requirements, analysis.keywords(), evidence, null));
+        // Single-flight (ADR-038): a double-click or a second tab on the same JD must not race
+        // a second full analysis+adjudication pipeline against this one.
+        String lockKey = "jd-optimize:" + analysis.jdVersionId();
+        return singleFlightLock.withLock(lockKey, LOCK_TTL, LOCK_POLL_TIMEOUT,
+                () -> refresh ? Optional.empty() : optimizations.findByJdVersionId(analysis.jdVersionId()),
+                () -> computeAndPersist(userId, jd, analysis, evidence));
+    }
 
-        Map<String, Object> optimisation = toMap(response.optimisation());
-        List<String> citedEvidenceIds = citedEvidenceIds(response.optimisation());
+    private JdOptimization computeAndPersist(String userId, JobDescription jd, JdAnalysis analysis,
+            List<EvidenceItem> evidence) {
+        EvidenceMatcher.FilterResult filter = evidenceMatcher.filter(analysis.requirements(), evidence);
+
+        JsonNode adjudicationMatches = objectMapper.createArrayNode();
+        String promptVersion = null;
+        String model = null;
+
+        if (!filter.selectedEvidence().isEmpty()) {
+            List<Requirement> requirementsWithCandidates = analysis.requirements().stream()
+                    .filter(r -> !filter.zeroCandidateRequirementIds().contains(r.requirementId()))
+                    .toList();
+
+            List<RequirementInput> requirementInputs = requirementsWithCandidates.stream()
+                    .map(r -> new RequirementInput(r.requirementId(), r.text(), r.type(), r.weight()))
+                    .toList();
+
+            JdOptimizationResponse response = callAi(new JdOptimizationRequest(
+                    analysis.title(), analysis.company(), analysis.seniority(),
+                    requirementInputs, List.of(), filter.selectedEvidence(), null));
+            adjudicationMatches = response.optimisation().path("matches");
+            promptVersion = textOrNull(response.provenance(), "promptVersion");
+            model = textOrNull(response.provenance(), "model");
+        } else {
+            log.info("Skipping the adjudication call entirely — every requirement is a "
+                    + "deterministic gap (no evidence candidate at all) for jobDescriptionId={}", jd.id());
+        }
+
+        Map<String, Object> optimisation = optimizationMerge.merge(
+                analysis, adjudicationMatches, filter.zeroCandidateRequirementIds(), evidence);
+        optimisation.put("derived", false);
+        optimisation.put("stale", false);
+
+        List<String> citedEvidenceIds = OptimizationMerge.citedEvidenceIds(optimisation);
+        String finalPromptVersion = promptVersion;
+        String finalModel = model;
 
         return optimizations.findByJdVersionId(analysis.jdVersionId())
                 .map(existing -> {
-                    existing.replaceWith(optimisation, citedEvidenceIds,
-                            textOrNull(response.provenance(), "promptVersion"),
-                            textOrNull(response.provenance(), "model"));
+                    existing.replaceWith(optimisation, citedEvidenceIds, finalPromptVersion, finalModel);
                     return optimizations.save(existing);
                 })
                 .orElseGet(() -> optimizations.save(new JdOptimization(
                         userId, jd.id(), analysis.jdVersionId(), optimisation, citedEvidenceIds,
-                        textOrNull(response.provenance(), "promptVersion"),
-                        textOrNull(response.provenance(), "model"))));
+                        finalPromptVersion, finalModel)));
+    }
+
+    /**
+     * Deterministic skill-gap patch (ADR-038) — <strong>zero Groq calls</strong>. Re-fetches the
+     * profile's current evidence (now including whatever was just added), re-runs the same
+     * lexical filtering {@link EvidenceMatcher} always does, and promotes any requirement that
+     * was previously a gap but now has a lexical candidate into a match citing that candidate —
+     * conservatively, as {@code PARTIAL}, never re-claiming {@code STRONG} (only a real
+     * adjudication call could justify that). Every previously-established match is carried
+     * forward completely unchanged. The result is marked {@code derived}/{@code stale}: it
+     * reflects a real, current gap check, but the promoted entries were never actually judged by
+     * the model — a user who wants that judgement can trigger a full {@code refresh=true}
+     * optimise, which this patch never replaces.
+     *
+     * @throws ApiException {@code VALIDATION_ERROR} if no optimization exists yet to patch —
+     *         the ordinary "Identify Skill Gaps" flow always creates one first
+     */
+    public JdOptimization patchWithLatestEvidence(String userId, String jobDescriptionId) {
+        JdAnalysis analysis = jdService.analyse(userId, jobDescriptionId);
+        JobDescription jd = jdService.requireOwned(userId, jobDescriptionId);
+
+        JdOptimization existing = optimizations.findByJdVersionId(analysis.jdVersionId())
+                .orElseThrow(() -> new ApiException(ErrorCode.VALIDATION_ERROR,
+                        "Run Identify Skill Gaps before adding individual skills."));
+
+        List<EvidenceItem> freshEvidence = fetchEvidence();
+        EvidenceMatcher.FilterResult freshFilter = evidenceMatcher.filter(analysis.requirements(), freshEvidence);
+
+        Set<String> alreadyMatchedRequirementIds = new HashSet<>();
+        ArrayNode syntheticMatches = objectMapper.createArrayNode();
+        for (Object rawMatch : existingRequirementMatches(existing.optimisation())) {
+            @SuppressWarnings("unchecked")
+            Map<String, Object> match = (Map<String, Object>) rawMatch;
+            String requirementId = (String) match.get("requirementId");
+            alreadyMatchedRequirementIds.add(requirementId);
+            ObjectNode node = objectMapper.createObjectNode();
+            node.put("requirementId", requirementId);
+            node.put("matchKind", (String) match.get("matchStrength"));
+            ArrayNode ids = node.putArray("evidenceIds");
+            @SuppressWarnings("unchecked")
+            List<String> evidenceIds = (List<String>) match.getOrDefault("evidenceIds", List.of());
+            evidenceIds.forEach(ids::add);
+            syntheticMatches.add(node);
+        }
+
+        int promoted = 0;
+        for (Requirement requirement : analysis.requirements()) {
+            if (alreadyMatchedRequirementIds.contains(requirement.requirementId())) {
+                continue;
+            }
+            if (freshFilter.zeroCandidateRequirementIds().contains(requirement.requirementId())) {
+                continue;
+            }
+            List<String> candidates = freshFilter.candidatesByRequirement()
+                    .getOrDefault(requirement.requirementId(), List.of());
+            if (candidates.isEmpty()) {
+                continue;
+            }
+            ObjectNode node = objectMapper.createObjectNode();
+            node.put("requirementId", requirement.requirementId());
+            node.put("matchKind", "PARTIAL");
+            ArrayNode ids = node.putArray("evidenceIds");
+            candidates.stream().limit(3).forEach(ids::add);
+            syntheticMatches.add(node);
+            promoted++;
+        }
+
+        Map<String, Object> optimisation = optimizationMerge.merge(
+                analysis, syntheticMatches, freshFilter.zeroCandidateRequirementIds(), freshEvidence);
+        optimisation.put("derived", true);
+        optimisation.put("stale", true);
+
+        log.info("Deterministic skill-gap patch for jobDescriptionId={}: promoted {} requirement(s) "
+                + "from missing to matched, zero Groq calls", jd.id(), promoted);
+
+        List<String> citedEvidenceIds = OptimizationMerge.citedEvidenceIds(optimisation);
+        existing.replaceWith(optimisation, citedEvidenceIds, existing.promptVersion(), existing.modelId());
+        return optimizations.save(existing);
+    }
+
+    @SuppressWarnings("unchecked")
+    private List<Object> existingRequirementMatches(Map<String, Object> optimisation) {
+        Object raw = optimisation == null ? null : optimisation.get("requirementMatches");
+        return raw instanceof List<?> list ? (List<Object>) list : List.of();
     }
 
     /** A stored optimization, scoped to its owner — someone else's is reported not-found, never
@@ -129,7 +259,7 @@ public class JdOptimizationService {
     }
 
     /** The current optimization for a job description, if one has been computed. */
-    public java.util.Optional<JdOptimization> findForJobDescription(String userId, String jobDescriptionId) {
+    public Optional<JdOptimization> findForJobDescription(String userId, String jobDescriptionId) {
         JdAnalysis analysis = jdService.analyse(userId, jobDescriptionId);
         return optimizations.findByJdVersionId(analysis.jdVersionId());
     }
@@ -156,37 +286,6 @@ public class JdOptimizationService {
             log.warn("profile-service call failed: {}", ex.status());
             throw new ApiException(ErrorCode.UPSTREAM_UNAVAILABLE);
         }
-    }
-
-    /** Every evidence id the result cites, in first-seen order. Mirrors ai-service's own
-     *  {@code JdOptimizationService.citedEvidenceIds} — recomputed here rather than trusted from
-     *  the wire, so what gets persisted as provenance is derived from the payload actually
-     *  stored. */
-    private List<String> citedEvidenceIds(JsonNode optimisation) {
-        Set<String> ids = new LinkedHashSet<>();
-        if (optimisation == null) {
-            return List.of();
-        }
-        for (JsonNode keyword : optimisation.path("keywords")) {
-            keyword.path("evidenceIds").forEach(id -> ids.add(id.asText()));
-        }
-        for (JsonNode match : optimisation.path("requirementMatches")) {
-            match.path("evidenceIds").forEach(id -> ids.add(id.asText()));
-        }
-        for (JsonNode item : optimisation.path("emphasis")) {
-            String id = item.path("evidenceId").asText(null);
-            if (id != null) {
-                ids.add(id);
-            }
-        }
-        return new ArrayList<>(ids);
-    }
-
-    private Map<String, Object> toMap(JsonNode node) {
-        if (node == null || node.isNull()) {
-            return Map.of();
-        }
-        return objectMapper.convertValue(node, new TypeReference<Map<String, Object>>() { });
     }
 
     private String textOrNull(JsonNode node, String field) {

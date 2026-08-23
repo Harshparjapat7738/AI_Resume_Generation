@@ -17,6 +17,13 @@ spring:
       uri: ${MONGODB_URI}
       database: ${MONGODB_DB_JD}
       auto-index-creation: false   # indexes are created explicitly at startup; see docs/DATABASE.md
+    # Single-flight coalescing for JD optimization (ADR-038) — a distributed lock only, no
+    # domain data lives here. Best-effort: see SingleFlightLock's own comment for the
+    # degrade-gracefully-if-unreachable behaviour this local/nodocker profile relies on.
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:}
   servlet:
     multipart:
       max-file-size: ${MAX_UPLOAD_SIZE:5MB}

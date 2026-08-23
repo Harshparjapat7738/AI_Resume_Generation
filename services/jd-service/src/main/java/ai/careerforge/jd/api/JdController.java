@@ -102,6 +102,18 @@ public class JdController {
         return ResponseEntity.ok(toOptimization(jdOptimizationService.optimise(userId, id, refresh)));
     }
 
+    /**
+     * Deterministic skill-gap patch (ADR-038): re-checks the caller's current evidence (after
+     * adding a skill from the Skill Gap screen) against this JD's already-computed optimization
+     * and promotes any newly-covered requirement — <strong>zero Groq calls</strong>. The result
+     * is marked {@code derived}/{@code stale} in its {@code optimisation} payload; a full,
+     * freshly-adjudicated result is still available via {@code POST /optimize?refresh=true}.
+     */
+    @PostMapping("/{id}/optimize/patch")
+    public ResponseEntity<JdOptimizationResponse> optimizePatch(@CallerId String userId, @PathVariable String id) {
+        return ResponseEntity.ok(toOptimization(jdOptimizationService.patchWithLatestEvidence(userId, id)));
+    }
+
     /** The current optimization for this JD, if one has been computed. 404 when none exists. */
     @GetMapping("/{id}/optimization")
     public ResponseEntity<JdOptimizationResponse> optimization(@CallerId String userId, @PathVariable String id) {

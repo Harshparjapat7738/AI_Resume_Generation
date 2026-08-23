@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -22,15 +23,26 @@ import ai.careerforge.jd.domain.Requirement;
 import ai.careerforge.jd.repository.JdOptimizationRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.springframework.data.redis.core.StringRedisTemplate;
 
 /**
- * The JD-optimization orchestration (ADR-033): input resolution, the single AI call, caching,
- * persistence and error mapping. The AI's own output filtering is ai-service's job and is tested
- * there — this covers what jd-service adds around it.
+ * The JD-optimization orchestration (ADR-033, restructured by ADR-038): input resolution,
+ * deterministic evidence pre-filtering, at most one adjudication call, deterministic merge,
+ * caching, persistence, single-flight, and error mapping. ai-service's own output filtering is
+ * tested there; this covers the call-count budget ADR-038 sets and everything jd-service adds
+ * around the adjudication call.
+ *
+ * <p>{@link EvidenceMatcher} and {@link OptimizationMerge} are used as real instances — they are
+ * pure, deterministic and side-effect-free, so mocking them would only re-describe their own
+ * logic instead of testing this class's orchestration of them. {@link SingleFlightLock} is real
+ * too, backed by an unstubbed {@link StringRedisTemplate} mock: calling it throws (no Redis to
+ * connect to), which exercises the lock's own documented degrade-to-uncoordinated behaviour —
+ * exactly what every test here needs, since none of them care about lock contention itself.
  */
 class JdOptimizationServiceTest {
 
@@ -50,44 +62,106 @@ class JdOptimizationServiceTest {
         profileServiceClient = mock(ProfileServiceClient.class);
         aiServiceClient = mock(AiServiceClient.class);
         optimizations = mock(JdOptimizationRepository.class);
+        StringRedisTemplate unreachableRedis = mock(StringRedisTemplate.class);
         service = new JdOptimizationService(jdService, profileServiceClient, aiServiceClient,
-                optimizations, new ObjectMapper());
+                optimizations, new ObjectMapper(), new EvidenceMatcher(), new OptimizationMerge(),
+                new SingleFlightLock(unreachableRedis));
 
         JdAnalysis analysis = new JdAnalysis(JD_ID, JD_VERSION_ID, "Backend Engineer", "Acme", "Senior",
                 List.of("Java", "Kafka"),
                 List.of(new Requirement("REQ-001", "5 years of Java", "HARD_REQUIRED", 5, List.of("Java"))),
-                "jd-analysis@v1", "openai/gpt-oss-120b");
+                "jd-analysis@v2", "openai/gpt-oss-120b");
         when(jdService.analyse(USER_ID, JD_ID)).thenReturn(analysis);
         when(jdService.requireOwned(USER_ID, JD_ID)).thenReturn(mock(JobDescription.class));
         when(optimizations.findByJdVersionId(JD_VERSION_ID)).thenReturn(Optional.empty());
         when(optimizations.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        // "Backend Engineer Acme Built Java services. Java" — lexically overlaps REQ-001's
+        // "Java" normalised term, so it is a real candidate, not a zero-candidate gap.
         when(profileServiceClient.getEvidence()).thenReturn(List.of(new EvidenceItem(
                 "EXP-004", "EXPERIENCE", "Backend Engineer", "Acme", "Built Java services.",
                 List.of("Java"), List.of(), "2019", "Present")));
     }
 
-    private void aiReturns(String optimisationJson) throws Exception {
+    private void aiReturns(String matchesJson) throws Exception {
         ObjectMapper mapper = new ObjectMapper();
         when(aiServiceClient.optimise(any())).thenReturn(new JdOptimizationResponse(
-                mapper.readTree(optimisationJson),
-                mapper.readTree("{\"promptVersion\":\"jd-optimization@v1\",\"model\":\"openai/gpt-oss-120b\"}")));
+                mapper.readTree(matchesJson),
+                mapper.readTree("{\"promptVersion\":\"jd-optimization@v2\",\"model\":\"openai/gpt-oss-120b\"}")));
     }
 
     @Test
     void persistsTheOptimizationWithItsEvidenceProvenance() throws Exception {
         aiReturns("""
-                {"targetRole":"Backend Engineer","keywords":[{"term":"Java","priority":"REQUIRED","evidenceIds":["EXP-004"]}],
-                 "requirementMatches":[{"requirementId":"REQ-001","evidenceIds":["EXP-004"],"matchStrength":"STRONG"}],
-                 "missingRequirements":[],"emphasis":[{"evidenceId":"EXP-004","rank":1}]}""");
+                {"matches":[{"requirementId":"REQ-001","evidenceIds":["EXP-004"],"confidence":0.9,"matchKind":"STRONG"}]}""");
 
         JdOptimization result = service.optimise(USER_ID, JD_ID, false);
 
         assertThat(result.userId()).isEqualTo(USER_ID);
         assertThat(result.jdVersionId()).isEqualTo(JD_VERSION_ID);
         assertThat(result.optimisation()).containsKey("keywords");
+        assertThat(result.optimisation()).containsEntry("derived", false);
         assertThat(result.citedEvidenceIds()).containsExactly("EXP-004");
-        assertThat(result.promptVersion()).isEqualTo("jd-optimization@v1");
+        assertThat(result.promptVersion()).isEqualTo("jd-optimization@v2");
         verify(optimizations).save(any());
+    }
+
+    @Test
+    @DisplayName("ADR-038: a first-time (cold) optimization spends at most one adjudication call")
+    void coldPathIsAtMostOneAdjudicationCall() throws Exception {
+        aiReturns("""
+                {"matches":[{"requirementId":"REQ-001","evidenceIds":["EXP-004"],"matchKind":"STRONG"}]}""");
+
+        service.optimise(USER_ID, JD_ID, false);
+
+        verify(aiServiceClient, times(1)).optimise(any());
+    }
+
+    @Test
+    @DisplayName("ADR-038: a requirement with no lexical candidate never reaches the adjudication call at all")
+    void zeroCandidateRequirementsSkipTheAdjudicationCallEntirely() {
+        // Evidence about an entirely different domain — no lexical overlap with "5 years of Java".
+        when(profileServiceClient.getEvidence()).thenReturn(List.of(new EvidenceItem(
+                "SKILL-001", "SKILL", "Watercolor painting", null, "Portrait painting",
+                List.of(), List.of(), null, null)));
+
+        JdOptimization result = service.optimise(USER_ID, JD_ID, false);
+
+        verify(aiServiceClient, never()).optimise(any());
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> missing = (List<Map<String, Object>>) result.optimisation().get("missingRequirements");
+        assertThat(missing).extracting(m -> m.get("requirementId")).containsExactly("REQ-001");
+    }
+
+    @Test
+    @DisplayName("ADR-038: adding a skill is a deterministic patch — zero Groq calls, marked derived/stale")
+    void skillGapPatchNeverCallsGroq() {
+        JdOptimization existing = new JdOptimization(USER_ID, JD_ID, JD_VERSION_ID,
+                new java.util.LinkedHashMap<>(Map.of("requirementMatches", List.of(), "keywords", List.of(),
+                        "missingRequirements", List.of(Map.of("requirementId", "REQ-001", "note", "gap")),
+                        "emphasis", List.of())),
+                List.of(), "jd-optimization@v2", "openai/gpt-oss-120b");
+        when(optimizations.findByJdVersionId(JD_VERSION_ID)).thenReturn(Optional.of(existing));
+
+        JdOptimization patched = service.patchWithLatestEvidence(USER_ID, JD_ID);
+
+        verify(aiServiceClient, never()).optimise(any());
+        assertThat(patched.optimisation()).containsEntry("derived", true);
+        assertThat(patched.optimisation()).containsEntry("stale", true);
+        // The newly-fetched evidence lexically overlaps REQ-001, so it is promoted out of missing.
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> matches = (List<Map<String, Object>>) patched.optimisation().get("requirementMatches");
+        assertThat(matches).extracting(m -> m.get("requirementId")).contains("REQ-001");
+    }
+
+    @Test
+    @DisplayName("patching before any optimization exists is rejected rather than fabricating one")
+    void patchingWithNoExistingOptimizationIsRejected() {
+        when(optimizations.findByJdVersionId(JD_VERSION_ID)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service.patchWithLatestEvidence(USER_ID, JD_ID))
+                .isInstanceOf(ApiException.class)
+                .extracting(ex -> ((ApiException) ex).code())
+                .isEqualTo(ErrorCode.VALIDATION_ERROR);
     }
 
     @Test
@@ -115,9 +189,9 @@ class JdOptimizationServiceTest {
 
     @Test
     @DisplayName("an existing result for the same JD version is reused rather than re-spending an AI request")
-    void cachesByJdVersion() throws Exception {
+    void cachesByJdVersion() {
         JdOptimization existing = new JdOptimization(USER_ID, JD_ID, JD_VERSION_ID,
-                java.util.Map.of("keywords", List.of()), List.of("EXP-004"), "jd-optimization@v1", "m");
+                Map.of("keywords", List.of()), List.of("EXP-004"), "jd-optimization@v2", "m");
         when(optimizations.findByJdVersionId(JD_VERSION_ID)).thenReturn(Optional.of(existing));
 
         JdOptimization result = service.optimise(USER_ID, JD_ID, false);
@@ -131,17 +205,16 @@ class JdOptimizationServiceTest {
     @DisplayName("refresh recomputes and replaces in place — one current result per JD version")
     void refreshReplacesRatherThanAccumulating() throws Exception {
         JdOptimization existing = new JdOptimization(USER_ID, JD_ID, JD_VERSION_ID,
-                java.util.Map.of("keywords", List.of()), List.of(), "old@v1", "old-model");
+                new java.util.LinkedHashMap<>(Map.of("keywords", List.of())), List.of(), "old@v1", "old-model");
         when(optimizations.findByJdVersionId(JD_VERSION_ID)).thenReturn(Optional.of(existing));
         aiReturns("""
-                {"keywords":[{"term":"Java","priority":"REQUIRED","evidenceIds":["EXP-004"]}],
-                 "requirementMatches":[],"missingRequirements":[],"emphasis":[]}""");
+                {"matches":[{"requirementId":"REQ-001","evidenceIds":["EXP-004"],"matchKind":"STRONG"}]}""");
 
         JdOptimization result = service.optimise(USER_ID, JD_ID, true);
 
         assertThat(result).isSameAs(existing);
         assertThat(result.citedEvidenceIds()).containsExactly("EXP-004");
-        assertThat(result.promptVersion()).isEqualTo("jd-optimization@v1");
+        assertThat(result.promptVersion()).isEqualTo("jd-optimization@v2");
         verify(optimizations).save(existing);
     }
 
