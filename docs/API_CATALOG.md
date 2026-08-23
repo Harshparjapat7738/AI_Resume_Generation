@@ -7,8 +7,8 @@ pull request that adds, changes or removes an API.
 plan — `auth-service` (register/login/refresh/logout/me, plus Google OAuth sign-in),
 `profile-service` (personal info,
 education, experience, skills, projects, certifications and achievements — all six
-evidence-bearing sections), `jd-service` (text intake, SSRF-guarded URL intake, confirm,
-analysis — see ADR-015), `resume-service` (synchronous generation + history, plus the
+evidence-bearing sections), `jd-service` (text intake, SSRF-guarded URL intake, analysis — no
+confirm gate, removed by ADR-037 — see ADR-015), `resume-service` (synchronous generation + history, plus the
 built-in template catalogue — see ADR-013, ADR-016), `document-service` (real Resume PDF
 rendering against the selected built-in template — see ADR-018), `assessment-service` (ATS +
 JD-fit scoring, scoped to structured content rather than a rendered document — see ADR-014)
@@ -312,7 +312,7 @@ server-side through the SSRF guard (`SsrfGuard` + `JdUrlFetcher` — scheme/port
 validation, every redirect hop re-validated, `text/html`-only, 3 MB cap, 5s/10s timeouts —
 see ARCHITECTURE_DECISIONS.md ADR-015), extracts it (schema.org `JobPosting` JSON-LD when
 the page provides it, generic readable text otherwise), and stores it exactly like a pasted
-JD — same response shape (`201`, `sourceType: "URL"`), same confirm/analysis flow after.
+JD — same response shape (`201`, `sourceType: "URL"`), same analysis flow after.
 
 **Status codes** `201` · `400 VALIDATION_ERROR` (malformed request body) ·
 `400 JD_URL_BLOCKED` (scheme/port/private-network address rejected by the SSRF guard, or too
@@ -325,19 +325,18 @@ and this case, since the distinction isn't actionable for the user.
 only ever non-null for a `URL`-sourced JD whose page had `JobPosting` JSON-LD —
 `location`, `skillsSummary`, `experienceSummary`. `404` if not owned.
 
-**POST** `/api/jd/{id}/confirm` — Bearer. Idempotent; sets `status = CONFIRMED`.
-
-**GET** `/api/jd/{id}/analysis` — Bearer. `409 JD_NOT_CONFIRMED` unless confirmed. On first
-call, calls `ai-service` (`POST /internal/ai/jd-analysis`) and caches the result on the JD
-version; subsequent calls return the cached analysis. Response:
+**GET** `/api/jd/{id}/analysis` — Bearer. No confirm gate any more (ADR-037 removed it — analysis
+always reads `currentVersion` directly). On first call, calls `ai-service`
+(`POST /internal/ai/jd-analysis`) and caches the result on the JD version; subsequent calls return
+the cached analysis. Response:
 `{ jobDescriptionId, title, company, seniority, keywords[], requirements[] }`.
 
 **POST** `/api/jd/{id}/optimize` — Bearer. `?refresh=false`. The JD-optimization operation
-(ADR-033) that replaced resume/cover-letter generation. Requires a confirmed JD; loads its
-cached analysis plus the caller's verified evidence from profile-service, calls `ai-service`
-(`POST /internal/ai/jd-optimization`), and persists the validated result. Returns targeting
-data, never a document. Re-reads an existing result for the same JD version unless
-`refresh=true` (use after a profile edit). `409 JD_NOT_CONFIRMED` unless confirmed;
+(ADR-033) that replaced resume/cover-letter generation. No confirm gate any more (ADR-037); loads
+the JD's cached analysis plus the caller's verified evidence from profile-service, calls
+`ai-service` (`POST /internal/ai/jd-optimization`), and persists the validated result. Returns
+targeting data, never a document. Re-reads an existing result for the same JD version unless
+`refresh=true` (use after a profile edit or a skill-gap add on the frontend's Skill Gap step).
 `422 VALIDATION_ERROR` when the JD has no requirements or the profile has no evidence;
 `502 AI_GENERATION_FAILED` / `429 RATE_LIMIT_EXCEEDED` on provider failure. Response:
 `{ id, jobDescriptionId, optimisation{ targetRole, targetCompany, keywords[], requirementMatches[],

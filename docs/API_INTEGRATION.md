@@ -27,7 +27,7 @@ One `*Api.ts` module per service, matching its DTOs field-for-field:
 |---|---|---|
 | `authApi.ts` | auth-service | register, login, refresh, logout, me |
 | `profileApi.ts` | profile-service | get/update personal info; CRUD for education/experience/skills/projects/certifications/achievements; evidence; `isProfileComplete()` and `computeProfileCompletion()` heuristics |
-| `jdApi.ts` | jd-service | submit (paste), fetch-url (URL intake), get, confirm, analysis |
+| `jdApi.ts` | jd-service | submit (paste), fetch-url (URL intake), get, analysis, optimize/get-optimization — no confirm call any more (ADR-037 removed the confirm gate) |
 | `assessmentApi.ts` | assessment-service | assess (compute), get (cached read) |
 | `applicationApi.ts` | application-service | create/get/list `Application`; generate/get email; generate/get cover letter; cover-letter document-generation fallback prompt |
 
@@ -86,8 +86,12 @@ onboarding path always resolves to the landing page.
 `components/layout/ProtectedRoute.tsx` reads `useSession()`. No session → redirect to
 `/login` with `state: { from: location }` so the destination can be restored after login (for
 users who don't need onboarding). Routes nested under it: `/onboarding`, `/profile`,
-`/dashboard`, `/generate`, `/generate/job`, `/generate/review/:jdId`,
-`/generate/processing/:jdId`, `/results/:resumeId`. `/`, `/login`, `/register` are public —
+`/dashboard`, `/generate` (redirects to `/generate/job`), `/generate/job`,
+`/generate/skill-gap/:jdId`, `/generate/output/:jdId`, `/generate/processing/:jdId`,
+`/results/:resumeId`. `/generate/review/:jdId` still exists only as a loader-redirect to
+`/generate/skill-gap/:jdId` — ADR-037 removed the page it used to render, keeping the path
+alive only so an old bookmark or link never renders a deleted page. `/`, `/login`, `/register`
+are public —
 the landing page is never a different page for authenticated users, only its nav changes
 (`SiteHeader.tsx`, `AppHeader.tsx` both read `useSession()` directly).
 
@@ -201,18 +205,22 @@ real per-stage progress to report, so no fake staged checklist.
   `/api/profile/import` remain planned (`docs/API_CATALOG.md` §3); every profile edit is a
   live, immediate mutation with no snapshot/undo.
 
-## JD optimization (ADR-033)
+## JD optimization (ADR-033) and the Skill Gap step (ADR-037)
 
 | Frontend file | Calls |
 |---|---|
+| `features/generate/GenerationJobDescriptionPage.tsx` (`/generate/job`) | `POST /api/jd` (paste) or `POST /api/jd/fetch-url` (URL) → navigates straight to `/generate/skill-gap/{jdId}` — no confirm step in between (ADR-037) |
+| `features/generate/GenerationSkillGapPage.tsx` (`/generate/skill-gap/:jdId`) | `services/jdApi.ts` → `optimizeForJd(jdId, refresh=false)` automatically on mount — this is where the real `ai-service` JD-analysis-plus-optimization call now happens. Adding a missing skill calls `profileApi.ts`'s `addSkill()` then re-runs `optimizeForJd(jdId, refresh=true)`. "Continue" navigates to `/generate/output/{jdId}` |
 | `services/jdApi.ts` → `optimizeForJd(id, refresh)` | `POST /api/jd/{id}/optimize?refresh=` |
 | `services/jdApi.ts` → `getJdOptimization(id)` | `GET /api/jd/{id}/optimization` |
-| `features/generate/ProcessingPage.tsx` | calls `optimizeForJd`, then redirects to `/results/optimization/{jobDescriptionId}` |
+| `features/generate/OutputTypePage.tsx` (`/generate/output/:jdId`) | none — pure client-side card selector, now the third step. Navigates to `/generate/processing/{jdId}?type=<GenerationType>` |
+| `features/generate/ProcessingPage.tsx` | for `JD_OPTIMIZATION`, re-calls `optimizeForJd(jdId, refresh=false)` — cheap, re-reads the result the Skill Gap step already computed — then redirects to `/results/optimization/{jobDescriptionId}` |
 | `features/results/OptimizationResultPage.tsx` | `getJdOptimization`, plus `getAnalysis` (requirement text) and `getProfile` (evidence labels) purely for display |
 | `services/assessmentApi.ts` → `getAssessment(jobDescriptionId)` | `GET /api/assessment/{jobDescriptionId}` |
 
-Errors follow the platform envelope: `409 JD_NOT_CONFIRMED`, `422 VALIDATION_ERROR` (no
-requirements, or an empty profile), `429 RATE_LIMIT_EXCEEDED`, `502 AI_GENERATION_FAILED`,
-`404` for anything not owned by the caller.
+Errors follow the platform envelope: `422 VALIDATION_ERROR` (no requirements, or an empty
+profile), `429 RATE_LIMIT_EXCEEDED`, `502 AI_GENERATION_FAILED`, `404` for anything not owned
+by the caller. `409 JD_NOT_CONFIRMED` no longer exists — the confirm gate it belonged to was
+removed by ADR-037, and the `ErrorCode` itself was deleted from `platform-common`.
 
 Email endpoints and their frontend callers are unchanged.

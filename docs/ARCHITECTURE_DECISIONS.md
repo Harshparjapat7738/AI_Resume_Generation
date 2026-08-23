@@ -43,6 +43,7 @@ implementation reality required a choice the blueprint did not make.
 | [ADR-034](#adr-034) | "My Templates": a user-owned library of uploaded Resume/Cover Letter files, living in profile-service (`templates` collection + the MinIO/S3 bucket document-service used to own), selected — never re-uploaded — at JD-optimization handoff time and referenced in the external AI prompt. No structural analysis, mail-merge or AI involvement; `document-service` is not reintroduced | Accepted |
 | [ADR-035](#adr-035) | `notification-service` removed: it never grew past a wired-up bootstrap skeleton (no controller, no domain logic, no Redis Stream consumer was ever implemented) and had zero active callers anywhere in the platform. Candidate-facing email (application-service) is unaffected | Accepted |
 | [ADR-036](#adr-036) | Resume and Cover Letter generation reintroduced across three separated responsibilities: `ai-service` generates grounded content fragments only, `application-service` deterministically assembles the versioned `ResumeDocumentModel`/`CoverLetterDocumentModel` and owns orchestration/persistence, and a new, narrow `render-service` renders that model — and only that model — into a PDF via Thymeleaf + Open HTML to PDF and verifies the artifact. `document-service` is not reintroduced, ADR-034 "My Templates" is untouched, no ATS/outcome score is produced anywhere in the pipeline (deterministic coverage facts only), ATS structural scoring stays deferred to a follow-up ADR | Accepted |
+| [ADR-037](#adr-037) | The JD Confirm step and the standalone Review/"Generate application" page are removed from the generation flow; Skill Gap becomes its own step, positioned between JD entry and Output Type. New flow: JD → Skill Gap → Output Type → Generate/Processing → Result. `jd-service`'s confirm gate (`JdService.confirm`, the `POST /{id}/confirm` endpoint, the `JD_NOT_CONFIRMED` check in `analyse`/`optimise`) is deleted; analysis and optimization now always read `currentVersion` directly. No new AI workflow, no change to JD analysis/skill-gap/profile/evidence/output-generation logic — the real Groq JD-optimization call simply moves to run automatically on the Skill Gap step instead of behind a separate confirm click | Accepted |
 
 ---
 
@@ -3578,3 +3579,83 @@ here, because none has run yet.
   updated to "Partially superseded by ADR-036"). ADR-033's Gemini-removal and deterministic-JD-fit-
   scoring clauses remain `Accepted` and binding, unchanged by this ADR. ADR-034 is not superseded in
   any part — it remains fully `Accepted` and untouched.
+
+---
+
+# ADR-037
+
+## Decision
+
+The generation flow had accumulated a step nobody asked for twice over: enter a JD, **confirm** it
+(a separate click gating a `CONFIRMED` status jd-service enforced before allowing analysis), see
+skill gaps only as a sidebar on the eventual results page, then **review** everything again on a
+dedicated "Generate application" page before generation actually ran. That's two gates
+(Confirm, Review) around one real decision point (which requirements the profile can't yet back up)
+that already had its own screen real estate. This record removes both gates outright and gives
+Skill Gap its own step, so the flow is exactly:
+
+```
+1. Enter Job Description
+2. Identify Skill Gaps (+ add missing ones to the profile, re-checked live)
+3. Choose Output Type (JD Optimized Resume / Cover Letter / Email Content / All)
+4. Generate Output / Processing
+5. Show generated result
+```
+
+- **`jd-service`: the confirm gate is deleted, not bypassed.** `JobDescription.confirm()` (the domain
+  method that set `status=CONFIRMED`, `confirmedAt`, `confirmedVersion`) is removed;
+  `JdService.confirm(userId, id)` is removed; the `POST /{id}/confirm` endpoint is removed; the
+  `JD_NOT_CONFIRMED` check in `JdService.analyse` is removed, and analysis/optimization now read
+  `currentVersion` directly instead of `confirmedVersion`. `editText()` (`PUT /{id}`) is no longer
+  blocked by a confirmed-JD 409 either — there is nothing left to lock against. The
+  `JobDescriptionStatus` enum keeps its `CONFIRMED`/`REJECTED` values and the `JobDescription` domain
+  class keeps its now-unused `confirmedAt`/`confirmedVersion` fields, for the same reason ADR-036's
+  legacy-collection policy exists: a live Atlas collection can hold documents shaped by code that
+  predates this change, and removing a field Spring Data still has to deserialize risks a crash on
+  read for exactly the users this change should be invisible to. Deleting the confirm *behavior*
+  carries no such risk; deleting the *shape* of already-persisted documents does.
+- **Frontend: the Review page is deleted, not hidden.** `GenerationReviewPage.tsx`,
+  `ConfirmAnalysisModal.tsx`, `JobDescriptionPanel.tsx`, `UnsavedChangesDialog.tsx` and
+  `JobContextPanel.tsx` (the last of these was salvageable under the old flow, where output type was
+  picked before JD entry and could still be shown as context on that step; under this flow output
+  type is chosen after skill gaps, so JD entry can no longer be type-aware, and the panel has no
+  remaining purpose) are removed outright. `frontend/src/services/jdApi.ts`'s `confirmJd()` is
+  removed to match. A new `GenerationSkillGapPage.tsx` is added at `/generate/skill-gap/:jdId`: it
+  runs the existing `optimizeForJd(jdId, refresh=false)` call automatically on mount — the same real
+  JD-analysis-plus-optimization Groq call the old flow spent on the Review step, just relocated —
+  renders the already-existing Required/Preferred keyword and gap cards, and lets the user add a
+  missing skill to their profile and re-check (`optimizeForJd(jdId, refresh=true)`) without leaving
+  the step. `OutputTypePage.tsx` moves from being the first step (bare `/generate`) to the third
+  (`/generate/output/:jdId`); `/generate` itself now redirects straight to `/generate/job`, and
+  `/generate/review/:jdId` — kept only so an old bookmark or link never renders a deleted page —
+  redirects to `/generate/skill-gap/:jdId` instead. `GenerationProgress`'s step list becomes the
+  fixed four-step `['Job Description', 'Skill Gap', 'Output Type', 'Generate']`, replacing the old
+  per-output-type step-list variants that existed to accommodate the Review step's differing
+  position.
+- **No new AI workflow, no duplicated generation logic.** The Skill Gap step's automatic optimize
+  call and the Output Type step's eventual "generate the resume" call both go through the same
+  `optimizeForJd` API `jd-service` already exposed; the second call simply passes `refresh=false` and
+  cheaply re-reads the persisted result the Skill Gap step already produced (or a user's skill-add
+  refreshed), rather than spending a second real Groq call. JD analysis, skill-gap analysis, profile
+  and evidence logic, and every existing output-generation code path are untouched.
+- **Cover Letter and "All" stay locked, not faked.** The acceptance goal was that a user "can select
+  Resume, Cover Letter, Email, or All"; the constraint was that this record must not build new
+  generation logic or duplicate existing logic. `application-service`'s `GenerationType` enum
+  documents, in its own Javadoc, that only `RESUME_ONLY` and `EMAIL_ONLY` have a real pipeline behind
+  them today — Cover Letter and All do not. Rather than either building that pipeline (forbidden by
+  this task's own scope) or offering a selection that silently does nothing (misleading), Output
+  Type reuses the codebase's pre-existing "🔒 Coming Soon" locked-card treatment for those two
+  options. This is a deliberate, flagged scope decision, not an oversight: closing it is future work
+  for whichever ADR eventually gives Cover Letter/All a real generation pipeline.
+- **No change**: AI prompts, Groq configuration, JD analysis logic, skill-gap analysis logic,
+  profile/evidence logic, output-generation logic, authentication, the dashboard, analytics, existing
+  output templates, or the database schema beyond the already-unused `confirmedAt`/`confirmedVersion`
+  fields being left in place rather than removed.
+- **Tests**: `services/jd-service`'s unit tests updated for the deleted confirm gate (the ownership/
+  confirmation-delegation test now asserts against `ApiException.notOwned()` instead of the removed
+  `JD_NOT_CONFIRMED` error code). Full reactor `mvn verify` passes. Frontend `npm run typecheck` and
+  `npm run build` are clean. `frontend/tests/e2e/` — `jd-optimization.spec.ts`,
+  `email-generation.spec.ts`, `anonymous-and-security.spec.ts`, `jd-url.spec.ts`, `dashboard.spec.ts`
+  — updated for the new step order and verified to parse (`playwright test --list`); none of these
+  suites were run against the live stack as part of this change (per this repo's existing e2e
+  convention, they require the full stack running).

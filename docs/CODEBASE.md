@@ -8,8 +8,8 @@ Updated whenever architecture or a major flow changes.
 `auth-service` (register/login/refresh/logout/me), `profile-service` (personal info,
 education, experience, skills, projects, certifications, achievements — all six
 evidence-bearing sections, via an 8-step onboarding wizard and an always-editable
-`/profile` page), `jd-service` (text intake, SSRF-guarded URL intake — ADR-015 — confirm,
-analysis),
+`/profile` page), `jd-service` (text intake, SSRF-guarded URL intake — ADR-015 — analysis, no
+confirm gate — removed by ADR-037),
 (synchronous generation + history, plus the built-in template catalogue — ADR-013, ADR-016),
 `assessment-service` (ATS + JD-fit scoring, scoped to structured content — ADR-014) and
 `application-service` (the central `Application` aggregate — references only, generation
@@ -184,11 +184,12 @@ Verified directly against a real profile document written before this section ex
 
 ```text
 jd-service
-├── Purpose        Ingest, normalise, analyse and confirm job descriptions
+├── Purpose        Ingest, normalise and analyse job descriptions
 ├── Port           8083
-├── Responsibilities  text and URL intake; whitespace/blank-line normalisation; mandatory
-│                  user confirmation before analysis; requirement extraction via
-│                  ai-service, cached per JD version
+├── Responsibilities  text and URL intake; whitespace/blank-line normalisation; requirement
+│                  extraction via ai-service, cached per JD version — no confirm gate any
+│                  more (ADR-037 removed it; analysis/optimization read currentVersion
+│                  directly)
 ├── URL intake     SsrfGuard + JdUrlFetcher (scheme/port/private-address validation, every
 │                  redirect hop re-validated, text/html-only, 3MB cap, 5s/10s timeouts) →
 │                  JobPostingExtractor (schema.org JobPosting JSON-LD when present, generic
@@ -379,11 +380,9 @@ JD Service
  ↓  File → MIME allowlist → magic-byte check → size cap → quarantine → Tika                     (pending)
  ↓  Text→ length validation, whitespace/blank-line normalisation                                 ✅
  ↓
-User confirmation  MANDATORY, and gated *before* analysis (stricter than the diagram implies
-                   below) — an AI call is itself something ADR-012 says only ever happens
-                   against confirmed content.
- ↓
-JD analysis        title · company · seniority · keywords · requirements, each classified
+JD analysis        No confirm gate any more (ADR-037 removed it — the frontend's Skill Gap
+                   step triggers analysis/optimization directly on JD entry). title ·
+                   company · seniority · keywords · requirements, each classified
                    HARD_REQUIRED | PREFERRED | RESPONSIBILITY | SKILL | TECHNOLOGY |
                    EDUCATION | CERTIFICATION. Computed on first read, cached on the JD
                    version thereafter.
@@ -393,7 +392,7 @@ JD analysis        title · company · seniority · keywords · requirements, ea
 
 ```text
 POST /api/jd/{id}/optimize            (gateway → jd-service)
-  ├── JdService.analyse                 confirmed JD + cached analysis (ownership enforced here)
+  ├── JdService.analyse                 currentVersion + cached analysis (ownership enforced here)
   ├── profile-service GET /api/profile/evidence     verified evidence inventory
   ├── ai-service POST /internal/ai/jd-optimization  one Groq call
   │     ├── JSON-Schema validation
