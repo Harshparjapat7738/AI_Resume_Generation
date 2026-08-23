@@ -119,6 +119,12 @@ export interface OptimizationData {
   requirementMatches: OptimizationRequirementMatch[];
   missingRequirements: { requirementId: string; note?: string }[];
   emphasis: OptimizationEmphasis[];
+  /** True when at least one entry here was deterministically patched (ADR-038 skill-gap
+   *  addition) rather than freshly adjudicated by Groq. */
+  derived?: boolean;
+  /** Companion to `derived` — a full `optimizeForJd(id, refresh=true)` re-check is available
+   *  whenever this is true. */
+  stale?: boolean;
 }
 
 export interface JdOptimization {
@@ -140,6 +146,17 @@ export interface JdOptimization {
  */
 export function optimizeForJd(id: string, refresh = false): Promise<JdOptimization> {
   return apiFetch<JdOptimization>(`/api/jd/${id}/optimize?refresh=${refresh}`, { method: 'POST' });
+}
+
+/**
+ * Deterministic skill-gap patch (ADR-038) — adds zero Groq calls. Re-checks the caller's
+ * current evidence against the already-computed optimization and promotes any newly-covered
+ * requirement; the result comes back with `optimisation.derived`/`stale` set. Use this instead
+ * of `optimizeForJd(id, true)` for "add this skill and re-check" — that call is reserved for an
+ * explicit, full re-adjudication.
+ */
+export function patchOptimizationWithLatestEvidence(id: string): Promise<JdOptimization> {
+  return apiFetch<JdOptimization>(`/api/jd/${id}/optimize/patch`, { method: 'POST' });
 }
 
 /** The current optimization for this JD. `ApiError` with status 404 when none exists yet. */

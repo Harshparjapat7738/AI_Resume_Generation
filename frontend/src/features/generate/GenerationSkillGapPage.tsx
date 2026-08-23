@@ -7,7 +7,7 @@ import { describeError } from '@/components/ui/ErrorBanner';
 import { showToast } from '@/components/ui/toast';
 import { DashboardSidebar } from '@/features/dashboard/components/DashboardSidebar';
 import { PlusCircleIcon } from '@/features/dashboard/icons';
-import { optimizeForJd, type JdOptimization } from '@/services/jdApi';
+import { optimizeForJd, patchOptimizationWithLatestEvidence, type JdOptimization } from '@/services/jdApi';
 import { addSkill } from '@/services/profileApi';
 import { useSession } from '@/services/session';
 import { ContentGenerationFailure } from './components/ContentGenerationFailure';
@@ -112,13 +112,20 @@ export function GenerationSkillGapPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [jdId]);
 
+  /**
+   * Adding one skill and re-checking is a local, deterministic patch (ADR-038) — zero Groq
+   * calls — not a full re-adjudication. `runOptimize(true)` (a real Groq call) stays available
+   * as an explicit "Regenerate" action for a user who wants a fresh, fully-judged result.
+   */
   const addSkillAndReoptimize = async (term: string) => {
     if (addingTerm) return;
     setAddingTerm(term);
     try {
       const updatedProfile = await addSkill({ name: term });
       queryClient.setQueryData(['profile'], updatedProfile);
-      await runOptimize(true);
+      const result = await patchOptimizationWithLatestEvidence(jdId);
+      setOptimization(result);
+      queryClient.setQueryData(['jd-optimization', jdId], result);
       showToast(`Added "${term}" to your profile — re-checked against this role.`);
     } catch (err) {
       showToast(describeError(err));
@@ -235,6 +242,17 @@ export function GenerationSkillGapPage() {
                     )}
                   </Card>
                 </div>
+
+                {data.derived && (
+                  <div className="flex flex-col items-start gap-2 rounded-2xl border border-border bg-surface-2 p-4 text-sm sm:flex-row sm:items-center sm:justify-between">
+                    <p className="text-ink-muted">
+                      Updated locally from the skills you added — not re-checked by AI yet.
+                    </p>
+                    <Button variant="secondary" onClick={() => runOptimize(true)} loading={loading}>
+                      Regenerate full check
+                    </Button>
+                  </div>
+                )}
 
                 <div className="flex flex-col items-start gap-3 rounded-2xl border border-border bg-surface p-6 sm:flex-row sm:items-center sm:justify-between">
                   <p className="text-sm text-ink-muted">
