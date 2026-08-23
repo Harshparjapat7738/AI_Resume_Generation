@@ -72,20 +72,15 @@ export function getJd(id: string): Promise<JdDetail> {
 }
 
 /**
- * The Review step's "Edit JD" action — replaces the pre-confirmation text with a new version
- * (jd-service keeps every version, but only the latest one is ever shown or confirmed against —
- * see docs/DATABASE.md's `jd_versions`). `409 CONFLICT` (via `ApiError`) once the job description
- * has already been confirmed; callers should only ever offer editing before that.
+ * Replaces the JD's text with a new version (jd-service keeps every version, but only the
+ * latest one is ever analysed/optimised against — see docs/DATABASE.md's `jd_versions`).
+ * Unconditional — there is no confirm step to block it (ADR-037).
  */
 export function editJd(id: string, jobDescriptionText: string): Promise<JdDetail> {
   return apiFetch<JdDetail>(`/api/jd/${id}`, {
     method: 'PUT',
     body: JSON.stringify({ jobDescriptionText }),
   });
-}
-
-export function confirmJd(id: string): Promise<JdSummary> {
-  return apiFetch<JdSummary>(`/api/jd/${id}/confirm`, { method: 'POST' });
 }
 
 /** May take several seconds on first call — this is when the JD is actually analysed by Groq. */

@@ -1,4 +1,4 @@
-import { createBrowserRouter } from 'react-router-dom';
+import { createBrowserRouter, Navigate, redirect } from 'react-router-dom';
 
 /**
  * Route table for the wizard described in the blueprint (§20).
@@ -9,6 +9,14 @@ import { createBrowserRouter } from 'react-router-dom';
  * always land on /onboarding (new/incomplete profile) or the originally-intended page
  * (existing, complete profile) — never automatically into a generation workflow. See
  * docs/API_INTEGRATION.md, "Authentication flow".
+ *
+ * Generation flow (no Confirm/Review step — removed entirely, not hidden): JD entry
+ * (/generate/job) -> skill gaps (/generate/skill-gap/:jdId) -> output type
+ * (/generate/output/:jdId) -> processing (/generate/processing/:jdId) -> result. Output type is
+ * chosen *after* skill gaps now, not before, so bare /generate (which used to be the output-type
+ * chooser) just redirects straight into the JD step — there is nothing left for it to show on
+ * its own. A stale bookmark to the old /generate/review/:jdId is caught by the catch-all below
+ * rather than 404ing or (worse) rendering nothing.
  */
 export const router = createBrowserRouter([
   {
@@ -89,10 +97,7 @@ export const router = createBrowserRouter([
       },
       {
         path: '/generate',
-        lazy: async () => {
-          const { OutputTypePage } = await import('../features/generate/OutputTypePage');
-          return { Component: OutputTypePage };
-        },
+        element: <Navigate to="/generate/job" replace />,
       },
       {
         path: '/generate/job',
@@ -102,11 +107,26 @@ export const router = createBrowserRouter([
         },
       },
       {
-        path: '/generate/review/:jdId',
+        path: '/generate/skill-gap/:jdId',
         lazy: async () => {
-          const { GenerationReviewPage } = await import('../features/generate/GenerationReviewPage');
-          return { Component: GenerationReviewPage };
+          const { GenerationSkillGapPage } = await import('../features/generate/GenerationSkillGapPage');
+          return { Component: GenerationSkillGapPage };
         },
+      },
+      {
+        path: '/generate/output/:jdId',
+        lazy: async () => {
+          const { OutputTypePage } = await import('../features/generate/OutputTypePage');
+          return { Component: OutputTypePage };
+        },
+      },
+      {
+        // Obsolete Confirm/Review URL (removed entirely) — a stale bookmark or a back-button
+        // press from before this change lands on the step that now actually exists for this JD,
+        // rather than 404ing or rendering nothing. A loader redirect, not a rendered component:
+        // the deleted Review page must never mount, even for a single tick.
+        path: '/generate/review/:jdId',
+        loader: ({ params }) => redirect(`/generate/skill-gap/${params.jdId}`),
       },
       {
         path: '/generate/processing/:jdId',

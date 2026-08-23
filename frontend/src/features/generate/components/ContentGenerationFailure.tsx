@@ -54,14 +54,6 @@ function diagnose(error: unknown, outputLabel: string): Diagnosis {
     };
   }
 
-  if (code === 'JD_NOT_CONFIRMED') {
-    return {
-      stage: 'jd',
-      detail: 'This job description hasn’t been confirmed yet, so there was nothing to generate against.',
-      retryable: false,
-    };
-  }
-
   if (code === 'AI_GENERATION_FAILED') {
     return {
       stage: 'content',

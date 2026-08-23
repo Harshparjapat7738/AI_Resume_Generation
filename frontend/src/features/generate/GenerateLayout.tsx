@@ -3,12 +3,11 @@ import { AppHeader } from '@/components/layout/AppHeader';
 import { GENERATION_STEPS } from './components/GenerationProgress';
 
 /**
- * Shell for every generation step except Review — Review (all four generation types) has its
- * own full-width dashboard shell instead (`GenerationReviewPage`), matching the redesign brief.
- * `steps` defaults to `GENERATION_STEPS` (the 5-step Resume/"Generate All" list, with its own
- * step list); callers on the Email path — which skip
- * template selection entirely — pass `stepsForGenerationType(type)` instead so the breadcrumb
- * never shows a step that generation type doesn't have.
+ * Shell for the simpler generation steps (Processing; Job Description/Skill Gap/Output Type
+ * use their own wider DashboardSidebar-based shell instead, matching the amount of content they
+ * show). `steps` defaults to `GENERATION_STEPS` — the one four-step shape every generation type
+ * shares (no Confirm/Review step, no per-type variants: Resume, Email, Cover Letter and "All"
+ * all move through the same four steps).
  */
 export function GenerateLayout({
   activeStep,

@@ -1,7 +1,7 @@
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useEffect, useState } from 'react';
 import { useForm } from 'react-hook-form';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import { z } from 'zod';
 import { Button } from '@/components/ui/Button';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
@@ -13,8 +13,7 @@ import { ApiError } from '@/services/apiClient';
 import { fetchJdFromUrl, submitJd } from '@/services/jdApi';
 import { useSession } from '@/services/session';
 import { GenerationCta } from './components/GenerationCta';
-import { GenerationProgress, stepsForGenerationType } from './components/GenerationProgress';
-import { GenerationTypeBadge, JobContextPanel, type GenerationFlowType } from './components/JobContextPanel';
+import { GenerationProgress } from './components/GenerationProgress';
 import { ReviewHeader } from './components/ReviewHeader';
 import { clearJdDraft, readJdDraft, writeJdDraft } from './utils/jdDraft';
 
@@ -32,41 +31,18 @@ const urlSchema = z.object({
 });
 type UrlFormValues = z.infer<typeof urlSchema>;
 
-const SUBTITLES: Record<GenerationFlowType, string> = {
-  JD_OPTIMIZATION: "We'll use this job description to analyze your fit and build your JD optimization.",
-  EMAIL_ONLY: "We'll use this job description to create your professional application email.",
-};
-
-const CTA_DESCRIPTIONS: Record<GenerationFlowType, string> = {
-  JD_OPTIMIZATION: "Next you'll review your match against this role, then generate your JD optimization.",
-  EMAIL_ONLY: "Next you'll review your match against this role before generating your email.",
-};
-
 /**
- * The shared "Job Description" step (redesign brief) — one component behind both remaining
- * generation flows, JD Optimization and Email (ADR-033), matching `GenerationReviewPage`'s
- * layout pattern (sidebar + compact header + full-width workspace). Only the heading badge,
- * subtitle, the generation-context panel and the Continue CTA's description vary by
- * `generationType` — the paste/URL input itself, its validation and its submit handlers are
- * identical either way.
+ * The "Job Description" step, now the very first step of the wizard (no Confirm/Review step,
+ * and output type is no longer chosen up front — see OutputTypePage, now the *third* step,
+ * reached after skill gaps). This page no longer knows or needs a generation type at all: the
+ * same JD feeds skill-gap identification, then whichever output the user picks afterward.
  *
- * The actual "Continue" action stays a single button with that exact, literal label rather than
- * per-type phrasing ("Continue to template" / "Continue to review") — every e2e spec that drives
- * this page (there are many) asserts `getByRole('button', { name: 'Continue', exact: true })`.
- * The per-type framing lives in the CTA card's description text instead, which isn't a fixed
- * contract the way the button's accessible name is.
+ * The "Continue" action stays a single button with that exact, literal label — every e2e spec
+ * that drives this page asserts `getByRole('button', { name: 'Continue', exact: true })`.
  */
 export function GenerationJobDescriptionPage() {
   const { data: user } = useSession();
   const navigate = useNavigate();
-  const [searchParams] = useSearchParams();
-  // Carried as a query param (not route state) so it survives a reload — matches how
-  // OutputTypePage navigates here (`?type=JD_OPTIMIZATION` or `?type=EMAIL_ONLY`, the only two
-  // values it ever sends, ADR-033). Anything else (missing param, a stale bookmarked link from
-  // before ADR-033 removed RESUME_ONLY/COVER_LETTER_ONLY/ALL) defaults to the optimization flow
-  // rather than being cast/trusted as-is — see JobContextPanel.tsx's own comment on why that
-  // cast was never actually safe.
-  const generationType: GenerationFlowType = searchParams.get('type') === 'EMAIL_ONLY' ? 'EMAIL_ONLY' : 'JD_OPTIMIZATION';
 
   // Read once, synchronously, before the forms below initialize from it — restores whatever the
   // user had typed/pasted/fetched if they navigated away from this step and came back before
@@ -112,11 +88,11 @@ export function GenerationJobDescriptionPage() {
     setSubmitError(null);
     try {
       const jd = await submitJd(values.jobDescriptionText);
-      // The job description now lives server-side under jd.id — GenerationReviewPage reads it
+      // The job description now lives server-side under jd.id — the skill-gap step reads it
       // from there, so the local draft has done its job and won't leak into a later, unrelated
       // visit to this step.
       clearJdDraft();
-      navigate(`/generate/review/${jd.id}?type=${generationType}`);
+      navigate(`/generate/skill-gap/${jd.id}`);
     } catch (error) {
       setSubmitError(error);
     }
@@ -127,7 +103,7 @@ export function GenerationJobDescriptionPage() {
     try {
       const jd = await fetchJdFromUrl(values.url);
       clearJdDraft();
-      navigate(`/generate/review/${jd.id}?type=${generationType}`);
+      navigate(`/generate/skill-gap/${jd.id}`);
     } catch (error) {
       setUrlError(error);
     }
@@ -151,8 +127,6 @@ export function GenerationJobDescriptionPage() {
   }
 
   const displayName = user.displayName?.trim() || user.email;
-  const subtitle = SUBTITLES[generationType];
-
   return (
     <div className="flex min-h-screen bg-void">
       <DashboardSidebar userName={displayName} userEmail={user.email} />
@@ -160,24 +134,26 @@ export function GenerationJobDescriptionPage() {
       <div className="flex min-w-0 flex-1 flex-col">
         <ReviewHeader
           title="Generate application"
-          backLabel="Back to output"
-          backTo="/generate"
+          backLabel="Back to dashboard"
+          backTo="/dashboard"
           showSaveDraft={false}
         />
 
         <main className="min-w-0 flex-1 px-5 py-7 pl-16 sm:px-7 lg:px-10 lg:py-9 lg:pl-10">
           <div className="mx-auto max-w-[1680px]">
-            <GenerationProgress activeStep={1} steps={stepsForGenerationType(generationType)} />
+            <GenerationProgress activeStep={0} />
 
             <div className="mt-6 flex flex-wrap items-center gap-3">
               <h1 className="text-2xl font-semibold tracking-tight text-ink sm:text-[28px]">
                 Add the Job Description
               </h1>
-              <GenerationTypeBadge generationType={generationType} />
             </div>
-            <p className="mt-1.5 text-sm text-ink-muted">{subtitle}</p>
+            <p className="mt-1.5 text-sm text-ink-muted">
+              We'll identify skill gaps against your verified profile, then you can build a
+              JD-optimized resume, cover letter or application email from it.
+            </p>
 
-            <div className="mt-8 grid gap-6 lg:grid-cols-[minmax(0,1fr)_340px]">
+            <div className="mt-8 mx-auto max-w-3xl">
               <div className="rounded-2xl border border-border bg-surface p-6 sm:p-8">
                 <h2 className="text-base font-semibold text-ink">Job description</h2>
                 <p className="mt-1 text-xs text-ink-faint">Paste the complete job posting, or import it from a URL.</p>
@@ -271,15 +247,13 @@ export function GenerationJobDescriptionPage() {
                   </form>
                 )}
               </div>
-
-              <JobContextPanel generationType={generationType} />
             </div>
 
             {tab === 'paste' && (
               <div className="mt-6">
                 <GenerationCta
                   heading="Ready to continue?"
-                  description={CTA_DESCRIPTIONS[generationType]}
+                  description="Next we'll identify skill gaps against your verified profile before you choose what to generate."
                   ctaLabel="Continue"
                   loading={pasteForm.formState.isSubmitting}
                   onGenerate={() => {

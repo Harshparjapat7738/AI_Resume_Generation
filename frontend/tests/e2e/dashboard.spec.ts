@@ -39,18 +39,24 @@ test('a new Email application shows up on the dashboard with its details, and li
   await registerAndCompleteMinimalProfile(page, 'e2e-dash-email');
 
   await page.getByRole('link', { name: 'Generate' }).first().click();
-  await page.waitForURL('**/generate');
-  await page.getByRole('button', { name: /Email Content/ }).click();
+  // /generate redirects straight into the JD step — output type is chosen later now, after
+  // skill gaps, not up front.
   await page.waitForURL('**/generate/job**');
   await page.fill(
     '#jobDescriptionText',
     'Support Engineer at Umbrella Corp. 2+ years customer-facing technical support experience.',
   );
   await page.getByRole('button', { name: 'Continue', exact: true }).click();
-  await page.waitForURL('**/generate/review/**');
-  await page.getByRole('button', { name: 'Confirm this is correct' }).click();
-  await expect(page.getByRole('button', { name: 'Generate my email' })).toBeVisible({ timeout: 60_000 });
-  await page.getByRole('button', { name: 'Generate my email' }).click();
+
+  await page.waitForURL('**/generate/skill-gap/**', { timeout: 10_000 });
+  await expect(page.getByRole('button', { name: 'Continue' })).toBeVisible({ timeout: 120_000 });
+  await page.getByRole('button', { name: 'Continue' }).click();
+
+  await page.waitForURL('**/generate/output/**');
+  await page.getByRole('button', { name: /Email Content/ }).click();
+
+  // Processing creates the Application and generates the email automatically — no separate
+  // "Generate my email" button exists any more (that lived on the deleted Review page).
   await page.waitForURL('**/results/email/**', { timeout: 60_000 });
   const applicationId = page.url().split('/results/email/')[1];
 
@@ -106,30 +112,10 @@ test('dashboard type and status filters narrow the list', async ({ page }) => {
   await expect(page.getByText('Oscorp')).toHaveCount(0);
 });
 
-
-  await page.getByRole('link', { name: 'Generate' }).first().click();
-  await page.waitForURL('**/generate');
-  await page.getByRole('button', { name: /^Resume/ }).click();
-  await page.waitForURL('**/generate/job**');
-  await page.fill(
-    '#jobDescriptionText',
-    'Backend Engineer at Wayne Enterprises. Java and Spring Boot experience required.',
-  );
-  await page.getByRole('button', { name: 'Continue', exact: true }).click();
-  await page.waitForURL('**/generate/review/**');
-  await page.getByRole('button', { name: 'Confirm this is correct' }).click();
-  await expect(page.getByRole('button', { name: 'Choose a template' })).toBeVisible({ timeout: 60_000 });
-  await page.getByRole('button', { name: 'Choose a template' }).click();
-  await page.waitForURL('**/generate/template/**');
-  await page.getByRole('button', { name: /^Modern ATS/ }).click();
-  await page.getByRole('button', { name: 'Generate my resume' }).click();
-  await page.waitForURL('**/results/**', { timeout: 120_000 });
-
-  await page.getByRole('link', { name: 'Dashboard' }).first().click();
-  await page.waitForURL('**/dashboard');
-  await expect(page.getByText('Resume history')).toBeVisible();
-  await expect(page.getByText('Wayne Enterprises')).toBeVisible();
-
-  await page.reload();
-  await expect(page.getByText('Wayne Enterprises')).toBeVisible();
-});
+// NOTE: a third test (Resume + template-selection reaching the dashboard) was present here as a
+// dangling, unwrapped code block with no enclosing `test(...)` — pre-existing corruption unrelated
+// to this change, discovered while fixing this file's review-step references. It also asserted a
+// `/generate/template/**` "Choose a template" flow that doesn't exist in the current app (Output
+// Type only offers JD Optimized Resume and Email Content as working paths, Cover Letter/All are
+// locked). Removed rather than reconstructed: inventing a test body for a flow that isn't
+// implemented would be fabricating coverage, not fixing it.

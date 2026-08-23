@@ -1,29 +1,14 @@
-/** Kept for the Email flow, which has no template step and never did. The resume flow that
- *  once owned `GENERATION_STEPS_WITH_TEMPLATE` was removed with document generation
- *  (ADR-033); JD optimization uses `GENERATION_STEPS_OPTIMIZE`. */
-export const GENERATION_STEPS_WITH_TEMPLATE = ['Output', 'Job description', 'Review', 'Template', 'Generate'] as const;
-export const GENERATION_STEPS_NO_TEMPLATE = ['Output', 'Job description', 'Review', 'Generate'] as const;
-/** JD optimization (ADR-033) — no template step, because it produces data rather than a
- *  document, and the final step is named for what it actually does. */
-export const GENERATION_STEPS_OPTIMIZE = ['Output', 'Job description', 'Review', 'Optimize'] as const;
-
-/** Default for pages that render before a generation type is known (OutputTypePage itself) —
- *  the 5-step list, since Resume/"Generate All" (the two types with a Template step) are the
- *  common case. Pages that already know `type` should pass `stepsForGenerationType(type)`
- *  instead so a Cover-Letter/Email flow never shows a step it doesn't have. */
-export const GENERATION_STEPS = GENERATION_STEPS_WITH_TEMPLATE;
-
-export function stepsForGenerationType(generationType: string): readonly string[] {
-  if (generationType === 'JD_OPTIMIZATION') return GENERATION_STEPS_OPTIMIZE;
-  return generationType === 'EMAIL_ONLY' || generationType === 'COVER_LETTER_ONLY'
-    ? GENERATION_STEPS_NO_TEMPLATE
-    : GENERATION_STEPS_WITH_TEMPLATE;
-}
+/**
+ * The one workflow shape every generation type shares: enter the JD, see and close skill gaps,
+ * pick what to generate, then generate it. No Confirm/Review step exists any more (removed
+ * entirely, not hidden) and no per-generation-type step-count variants exist either — Resume,
+ * Email, Cover Letter and "All" all move through the exact same four steps, so there is nothing
+ * left to select a step list by type any more.
+ */
+export const GENERATION_STEPS = ['Job Description', 'Skill Gap', 'Output Type', 'Generate'] as const;
 
 /**
- * The workflow indicator, shared by every generation type (point 5 of the redesign spec).
- * JD optimization ends at an "Optimize" step; Email goes straight from Review to Generate.
- * Neither picks a template — that step was removed with document generation (ADR-033).
+ * The workflow indicator, shared by every generation type.
  *
  * Desktop: full horizontal rail with connecting lines. Mobile: a compact "Step N of {total} —
  * label" strip plus a slim progress bar, so the labels never wrap or force horizontal scroll on

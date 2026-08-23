@@ -56,29 +56,31 @@ async function registerProfileAndReachOptimizeStep(
   await page.waitForURL('/');
 
   await page.getByRole('link', { name: 'Generate' }).first().click();
-  await page.waitForURL('**/generate');
-  await page.getByRole('button', { name: /JD Optimization/ }).click();
+  // /generate now redirects straight into the JD step — output type is chosen later, after
+  // skill gaps, not up front any more.
   await page.waitForURL('**/generate/job**');
-  expect(page.url()).toContain('type=JD_OPTIMIZATION');
 
   await page.fill('#jobDescriptionText', JOB_DESCRIPTION);
   await page.getByRole('button', { name: 'Continue', exact: true }).click();
-  await page.waitForURL('**/generate/review/**');
 
-  await page.getByRole('button', { name: 'Confirm this is correct' }).click();
-  await expect(page.getByRole('button', { name: 'Generate JD Optimization' }))
-    .toBeVisible({ timeout: 60_000 });
+  // The skill-gap step runs the real JD analysis + optimization automatically (one or two Groq
+  // calls) — generous timeout, same as the other generation specs.
+  await page.waitForURL('**/generate/skill-gap/**', { timeout: 10_000 });
+  await expect(page.getByRole('button', { name: 'Continue' })).toBeVisible({ timeout: 120_000 });
+  await page.getByRole('button', { name: 'Continue' }).click();
+
+  await page.waitForURL('**/generate/output/**');
+  await page.getByRole('button', { name: /JD Optimized Resume/ }).click();
+
+  // The optimization already exists from the skill-gap step, so Processing here is fast — it
+  // just re-reads the cached result (refresh=false) rather than spending another AI call.
+  await page.waitForURL('**/results/optimization/**', { timeout: 30_000 });
+  await expect(page.getByRole('heading', { name: 'Your JD Optimization Is Ready' }))
+    .toBeVisible({ timeout: 30_000 });
 }
 
 test('JD optimization: keywords, matches and gaps derived from the real profile', async ({ page }) => {
   await registerProfileAndReachOptimizeStep(page, 'e2e-opt-happy');
-
-  await page.getByRole('button', { name: 'Generate JD Optimization' }).click();
-
-  // One real Groq call happens here — generous timeout, same as the other generation specs.
-  await page.waitForURL('**/results/optimization/**', { timeout: 120_000 });
-  await expect(page.getByRole('heading', { name: 'Your JD Optimization Is Ready' }))
-    .toBeVisible({ timeout: 60_000 });
 
   // Target role comes from the JD analysis, not from anything the user typed into a form.
   await expect(page.getByText(/Globex/i).first()).toBeVisible();
@@ -102,11 +104,6 @@ test('JD optimization: keywords, matches and gaps derived from the real profile'
 test('optimization result survives a reload and is not regenerated', async ({ page }) => {
   await registerProfileAndReachOptimizeStep(page, 'e2e-opt-reload');
 
-  await page.getByRole('button', { name: 'Generate JD Optimization' }).click();
-  await page.waitForURL('**/results/optimization/**', { timeout: 120_000 });
-  await expect(page.getByRole('heading', { name: 'Your JD Optimization Is Ready' }))
-    .toBeVisible({ timeout: 60_000 });
-
   const url = page.url();
   await page.reload();
 
@@ -119,11 +116,6 @@ test('optimization result survives a reload and is not regenerated', async ({ pa
 test('export actions are real: copy JSON, download JSON, and the external AI prompt', async ({ page, context }) => {
   await context.grantPermissions(['clipboard-read', 'clipboard-write']);
   await registerProfileAndReachOptimizeStep(page, 'e2e-opt-export');
-
-  await page.getByRole('button', { name: 'Generate JD Optimization' }).click();
-  await page.waitForURL('**/results/optimization/**', { timeout: 120_000 });
-  await expect(page.getByRole('heading', { name: 'Your JD Optimization Is Ready' }))
-    .toBeVisible({ timeout: 60_000 });
 
   // Copy JSON — real clipboard content, parseable, with the schema's own shape.
   await page.getByRole('button', { name: 'Copy Optimization JSON' }).click();
@@ -204,17 +196,18 @@ test('ChatGPT handoff: a saved template is selected (never re-uploaded) and carr
   await page.waitForURL('/');
 
   await page.getByRole('link', { name: 'Generate' }).first().click();
-  await page.waitForURL('**/generate');
-  await page.getByRole('button', { name: /JD Optimization/ }).click();
   await page.waitForURL('**/generate/job**');
   await page.fill('#jobDescriptionText', JOB_DESCRIPTION);
   await page.getByRole('button', { name: 'Continue', exact: true }).click();
-  await page.waitForURL('**/generate/review/**');
-  await page.getByRole('button', { name: 'Confirm this is correct' }).click();
-  await expect(page.getByRole('button', { name: 'Generate JD Optimization' })).toBeVisible({ timeout: 60_000 });
-  await page.getByRole('button', { name: 'Generate JD Optimization' }).click();
-  await page.waitForURL('**/results/optimization/**', { timeout: 120_000 });
-  await expect(page.getByRole('heading', { name: 'Your JD Optimization Is Ready' })).toBeVisible({ timeout: 60_000 });
+
+  await page.waitForURL('**/generate/skill-gap/**', { timeout: 10_000 });
+  await expect(page.getByRole('button', { name: 'Continue' })).toBeVisible({ timeout: 120_000 });
+  await page.getByRole('button', { name: 'Continue' }).click();
+
+  await page.waitForURL('**/generate/output/**');
+  await page.getByRole('button', { name: /JD Optimized Resume/ }).click();
+  await page.waitForURL('**/results/optimization/**', { timeout: 30_000 });
+  await expect(page.getByRole('heading', { name: 'Your JD Optimization Is Ready' })).toBeVisible({ timeout: 30_000 });
 
   // The template the user saved earlier is pre-selected as their default — nothing to upload
   // here, no "Upload Template" action exists on this page at all.

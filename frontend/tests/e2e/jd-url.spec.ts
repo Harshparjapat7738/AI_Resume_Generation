@@ -33,8 +33,8 @@ async function loginFreshUserAtJobDescriptionStep(page: import('@playwright/test
   await page.waitForURL('/');
 
   await page.getByRole('link', { name: 'Generate' }).first().click();
-  await page.waitForURL('**/generate');
-  await page.getByRole('button', { name: /^Resume/ }).click();
+  // /generate redirects straight into the JD step — output type is chosen later now, after
+  // skill gaps, not up front.
   await page.waitForURL('**/generate/job**');
   await page.getByRole('button', { name: 'Job URL' }).click();
 }
@@ -74,24 +74,17 @@ test('client-side validation catches an obviously malformed URL before any reque
   await expect(page.getByText('Enter a valid URL, including https://')).toBeVisible();
 });
 
-test('a successfully fetched URL reaches Review with the extracted text, and survives refresh', async ({ page }) => {
+test('a successfully fetched URL is submitted and proceeds straight to skill gaps', async ({ page }) => {
   await loginFreshUserAtJobDescriptionStep(page);
 
-  // example.com is stable, always reachable, and has no JobPosting JSON-LD — this
-  // exercises the generic text-extraction fallback path end-to-end through the real UI.
+  // example.com is stable, always reachable, and has no JobPosting JSON-LD — this exercises
+  // the generic text-extraction fallback path end-to-end through the real UI. There is no
+  // review step to preview the extracted text on any more — a successful fetch goes straight
+  // to the skill-gap step, which analyses and optimizes the extracted text directly.
   await page.fill('#url', 'https://example.com');
   await page.getByRole('button', { name: 'Fetch job description' }).click();
 
-  await page.waitForURL('**/generate/review/**', { timeout: 20_000 });
-  await expect(page.getByText('Fetched from URL')).toBeVisible();
-  await expect(page.getByText('https://example.com')).toBeVisible();
-  await expect(page.getByText('Extracted description')).toBeVisible();
-  await expect(page.getByText('Example Domain')).toBeVisible(); // example.com's own heading
-  await expect(page.getByText('JDBREAKMARKER')).toHaveCount(0); // internal marker must never leak
-
-  await page.reload();
-  await expect(page.getByText('Fetched from URL')).toBeVisible();
-  await expect(page.getByText('Example Domain')).toBeVisible();
+  await page.waitForURL('**/generate/skill-gap/**', { timeout: 20_000 });
 });
 
 test('the existing paste workflow is unaffected', async ({ page }) => {
@@ -105,7 +98,6 @@ test('the existing paste workflow is unaffected', async ({ page }) => {
   );
   await page.getByRole('button', { name: 'Continue', exact: true }).click();
 
-  await page.waitForURL('**/generate/review/**', { timeout: 10_000 });
-  await expect(page.getByText('Submitted text')).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Confirm this is correct' })).toBeVisible();
+  // No review/confirm step any more — Continue goes straight to skill gaps.
+  await page.waitForURL('**/generate/skill-gap/**', { timeout: 10_000 });
 });

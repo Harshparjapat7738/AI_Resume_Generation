@@ -1,12 +1,11 @@
 /**
  * Client-side draft for the Job Description step — nothing is sent to the backend until
  * "Continue"/"Fetch job description" succeeds, so anything typed before that only ever lived in
- * component state, which React discards the moment the page unmounts (e.g. "Back to output" and
- * choosing a different output type, a stray browser back, or an accidental refresh). This
- * persists the in-progress paste text / URL / active tab to sessionStorage so it survives all of
- * that — cleared automatically the moment a job description is actually submitted, since from
- * then on the real thing is safely stored server-side (jd-service) and addressable by its own
- * id, which is what GenerationReviewPage reads instead.
+ * component state, which React discards the moment the page unmounts (e.g. a stray browser back,
+ * or an accidental refresh). This persists the in-progress paste text / URL / active tab to
+ * sessionStorage so it survives all of that — cleared automatically the moment a job description
+ * is actually submitted, since from then on the real thing is safely stored server-side
+ * (jd-service) and addressable by its own id, which the skill-gap step reads instead.
  *
  * sessionStorage (not localStorage): scoped to this one tab for the life of this one session —
  * a draft shouldn't reappear in a different tab, and shouldn't outlive the browser being closed.

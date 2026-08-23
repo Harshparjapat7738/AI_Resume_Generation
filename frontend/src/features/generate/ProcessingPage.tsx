@@ -4,19 +4,21 @@ import { Button } from '@/components/ui/Button';
 import { createApplication, generateEmail } from '@/services/applicationApi';
 import { optimizeForJd } from '@/services/jdApi';
 import { ContentGenerationFailure } from './components/ContentGenerationFailure';
-import { stepsForGenerationType } from './components/GenerationProgress';
 import { GenerateLayout } from './GenerateLayout';
 
 /**
  * Runs the one backend call the chosen output needs, then redirects to its result page.
  *
- * <p>Two flows remain (ADR-033): JD optimization (`POST /api/jd/{id}/optimize`, one Groq call
- * inside) and application email (create the `Application`, then generate its content). Neither
- * picks a template, so this page no longer has a template step before it.
+ * <p>Two working flows today (ADR-033/ADR-036): JD-optimized resume (`POST /api/jd/{id}/optimize`
+ * — cheap/idempotent here since the skill-gap step already computed it; the result page's own
+ * button drives the actual resume-render call) and application email (create the `Application`,
+ * then generate its content). Cover Letter and "All" have no generation logic behind them yet —
+ * OutputTypePage never sends either type here, so this page never has to handle them.
  *
  * <p>There's no per-stage progress signal from either call, so the optimization checklist marks
- * the JD and profile as already done — they genuinely are, resolved in earlier steps — and shows
- * only the AI call as in flight. Nothing here fakes a timeline.
+ * the JD and profile as already done — they genuinely are, resolved in the skill-gap step — and
+ * shows only the (typically instant, already-cached) re-check as in flight. Nothing here fakes a
+ * timeline.
  */
 export function ProcessingPage() {
   const { jdId = '' } = useParams<{ jdId: string }>();
@@ -75,7 +77,6 @@ export function ProcessingPage() {
   return (
     <GenerateLayout
       activeStep={3}
-      steps={stepsForGenerationType(generationType)}
       title={isOptimization ? 'Generating Your JD Optimization' : 'Generating Your Email'}
       subtitle="Grounded in your evidence only — nothing here is invented."
     >
@@ -94,10 +95,10 @@ export function ProcessingPage() {
               Try again
             </Button>
             <Link
-              to={`/generate/review/${jdId}?type=${generationType}`}
+              to={`/generate/output/${jdId}`}
               className="inline-flex items-center text-sm text-ink-muted hover:text-ink"
             >
-              Back to review
+              Back to output type
             </Link>
           </div>
         </div>

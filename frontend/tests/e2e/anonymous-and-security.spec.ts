@@ -60,15 +60,16 @@ test.describe('security: cross-user access and unauthorized endpoints', () => {
 
     // User A creates an email application.
     await pageA.getByRole('link', { name: 'Generate' }).first().click();
-    await pageA.waitForURL('**/generate');
-    await pageA.getByRole('button', { name: /Email Content/ }).click();
     await pageA.waitForURL('**/generate/job**');
     await pageA.fill('#jobDescriptionText', 'Support Engineer at Wayne Enterprises. 2+ years support experience.');
     await pageA.getByRole('button', { name: 'Continue', exact: true }).click();
-    await pageA.waitForURL('**/generate/review/**');
-    await pageA.getByRole('button', { name: 'Confirm this is correct' }).click();
-    await expect(pageA.getByRole('button', { name: 'Generate my email' })).toBeVisible({ timeout: 60_000 });
-    await pageA.getByRole('button', { name: 'Generate my email' }).click();
+
+    await pageA.waitForURL('**/generate/skill-gap/**', { timeout: 10_000 });
+    await expect(pageA.getByRole('button', { name: 'Continue' })).toBeVisible({ timeout: 120_000 });
+    await pageA.getByRole('button', { name: 'Continue' }).click();
+
+    await pageA.waitForURL('**/generate/output/**');
+    await pageA.getByRole('button', { name: /Email Content/ }).click();
     await pageA.waitForURL('**/results/email/**', { timeout: 60_000 });
     const applicationId = pageA.url().split('/results/email/')[1];
 

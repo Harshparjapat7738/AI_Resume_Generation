@@ -11,7 +11,7 @@ import { selectMonth } from './helpers/formControls';
  * for its own continuous coverage.
  */
 
-async function loginFreshUserToEmailReview(
+async function generateEmailForFreshUser(
   page: import('@playwright/test').Page,
   emailPrefix: string,
   jobDescriptionText: string,
@@ -53,29 +53,33 @@ async function loginFreshUserToEmailReview(
   await page.waitForURL('/');
 
   await page.getByRole('link', { name: 'Generate' }).first().click();
-  await page.waitForURL('**/generate');
-  await page.getByRole('button', { name: /Email Content/ }).click();
+  // /generate redirects straight into the JD step — output type (Email Content) is chosen
+  // later now, after skill gaps, not up front.
   await page.waitForURL('**/generate/job**');
-  await expect(page.url()).toContain('type=EMAIL_ONLY');
 
   await page.fill('#jobDescriptionText', jobDescriptionText);
   await page.getByRole('button', { name: 'Continue', exact: true }).click();
-  await page.waitForURL('**/generate/review/**');
 
-  await page.getByRole('button', { name: 'Confirm this is correct' }).click();
-  await expect(page.getByRole('button', { name: 'Generate my email' })).toBeVisible({ timeout: 60_000 });
+  // The skill-gap step runs the real JD analysis + optimization automatically.
+  await page.waitForURL('**/generate/skill-gap/**', { timeout: 10_000 });
+  await expect(page.getByRole('button', { name: 'Continue' })).toBeVisible({ timeout: 120_000 });
+  await page.getByRole('button', { name: 'Continue' }).click();
+
+  await page.waitForURL('**/generate/output/**');
+  await page.getByRole('button', { name: /Email Content/ }).click();
+
+  // Processing creates the Application and generates the email automatically — no separate
+  // "Generate my email" button exists any more (that lived on the deleted Review page).
+  await page.waitForURL('**/results/email/**', { timeout: 60_000 });
 }
 
 test('email generation: correct user, correct job, grounded content, and persistence across a reload', async ({ page }) => {
-  await loginFreshUserToEmailReview(
+  await generateEmailForFreshUser(
     page,
     'e2e-email-happy',
     'Senior Backend Engineer at Globex Inc. We need 3+ years of Java and Spring Boot '
       + 'experience building backend services.',
   );
-
-  await page.getByRole('button', { name: 'Generate my email' }).click();
-  await page.waitForURL('**/results/email/**', { timeout: 60_000 });
 
   // Correct job: the deterministic subject names the actual role and company applied to —
   // never a placeholder, never a different job.
@@ -102,14 +106,11 @@ test('email generation: correct user, correct job, grounded content, and persist
 
 test('email actions: copy subject, copy email and download are all real, working buttons', async ({ page, context }) => {
   await context.grantPermissions(['clipboard-read', 'clipboard-write']);
-  await loginFreshUserToEmailReview(
+  await generateEmailForFreshUser(
     page,
     'e2e-email-actions',
     'Backend Engineer at Initech. Java and Spring Boot experience required.',
   );
-  await page.getByRole('button', { name: 'Generate my email' }).click();
-  await page.waitForURL('**/results/email/**', { timeout: 60_000 });
-
   await page.getByRole('button', { name: 'Copy Subject' }).click();
   await expect(page.getByRole('button', { name: 'Copied' })).toBeVisible();
 
@@ -123,13 +124,11 @@ test('email actions: copy subject, copy email and download are all real, working
 });
 
 test('regenerating an email produces a new version without creating a second application', async ({ page }) => {
-  await loginFreshUserToEmailReview(
+  await generateEmailForFreshUser(
     page,
     'e2e-email-regenerate',
     'Backend Engineer at Umbrella Corp. Java and Spring Boot experience required.',
   );
-  await page.getByRole('button', { name: 'Generate my email' }).click();
-  await page.waitForURL('**/results/email/**', { timeout: 60_000 });
   const applicationUrl = page.url();
 
   await page.getByRole('button', { name: 'Regenerate' }).click();
@@ -140,7 +139,7 @@ test('regenerating an email produces a new version without creating a second app
   expect(page.url()).toBe(applicationUrl);
 });
 
-test('the resume flow is unaffected: Output Type still offers Resume as its own, separate path', async ({ page }) => {
+test('the resume flow is unaffected: Output Type still offers a resume path alongside Email', async ({ page }) => {
   const email = `e2e-email-noregress+${Date.now()}@example.com`;
   await page.goto('/register');
   await page.fill('#displayName', 'Regression Tester');
@@ -151,10 +150,21 @@ test('the resume flow is unaffected: Output Type still offers Resume as its own,
   await page.fill('#fullName', 'Regression Tester');
   await page.getByRole('button', { name: 'Save & continue' }).click();
 
-  await page.goto('/generate');
-  await expect(page.getByRole('button', { name: /^Resume/ })).toBeVisible();
+  // Output type is now the third step (after JD entry and skill gaps), not the first — it needs
+  // a real jdId, so this test drives a minimal JD through to that step rather than asserting on
+  // a route that no longer shows a type chooser at all.
+  await page.goto('/generate/job');
+  await page.fill('#jobDescriptionText', 'Backend Engineer at Initech. Java experience required.');
+  await page.getByRole('button', { name: 'Continue', exact: true }).click();
+
+  await page.waitForURL('**/generate/skill-gap/**', { timeout: 10_000 });
+  await expect(page.getByRole('button', { name: 'Continue' })).toBeVisible({ timeout: 120_000 });
+  await page.getByRole('button', { name: 'Continue' }).click();
+
+  await page.waitForURL('**/generate/output/**');
+  await expect(page.getByRole('button', { name: /JD Optimized Resume/ })).toBeVisible();
   await expect(page.getByRole('button', { name: /Email Content/ })).toBeVisible();
-  await page.getByRole('button', { name: /^Resume/ }).click();
-  await page.waitForURL('**/generate/job**');
-  expect(page.url()).toContain('type=RESUME_ONLY');
+  await page.getByRole('button', { name: /JD Optimized Resume/ }).click();
+  await page.waitForURL('**/generate/processing/**');
+  expect(page.url()).toContain('type=JD_OPTIMIZATION');
 });
