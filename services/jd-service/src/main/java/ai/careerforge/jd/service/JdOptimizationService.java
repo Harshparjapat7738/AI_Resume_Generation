@@ -26,16 +26,16 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 /**
- * Orchestrates JD optimization (ADR-033): confirmed JD analysis + verified evidence &rarr;
- * ai-service &rarr; persisted {@link JdOptimization}. The successor to resume-service's
- * generation orchestration, and deliberately the same shape — resolve inputs, make one AI call,
- * persist the validated result — minus the two-stage content pipeline, because there is no
- * content to write.
+ * Orchestrates JD optimization (ADR-033): JD analysis (against the JD's current text — no
+ * confirm step, ADR-037) + verified evidence &rarr; ai-service &rarr; persisted
+ * {@link JdOptimization}. The successor to resume-service's generation orchestration, and
+ * deliberately the same shape — resolve inputs, make one AI call, persist the validated result —
+ * minus the two-stage content pipeline, because there is no content to write.
  *
- * <p>Lives in jd-service because everything it needs is already here: the confirmed job
- * description, its ownership check, and its cached analysis. The only new dependency is
- * profile-service for the evidence inventory. Nothing about the JD or the profile is copied into
- * the stored result — see {@link JdOptimization}.
+ * <p>Lives in jd-service because everything it needs is already here: the job description, its
+ * ownership check, and its cached analysis. The only new dependency is profile-service for the
+ * evidence inventory. Nothing about the JD or the profile is copied into the stored result — see
+ * {@link JdOptimization}.
  *
  * <p>Runs synchronously inside the request, matching how JD analysis and (formerly) resume
  * generation already behaved (ADR-013): one Groq call, typically single-digit seconds.
@@ -62,7 +62,7 @@ public class JdOptimizationService {
     }
 
     /**
-     * Optimises the candidate's profile against a confirmed job description.
+     * Optimises the candidate's profile against the job description's current text.
      *
      * <p>{@code refresh=false} returns an existing optimization for the same JD version rather
      * than spending another AI request — the same read-through caching {@code JdService#analyse}
@@ -70,14 +70,13 @@ public class JdOptimizationService {
      * what the user wants after editing their profile: the JD text is unchanged, but the
      * evidence it is being matched against is not.
      *
-     * @throws ApiException {@code JD_NOT_CONFIRMED} if the JD hasn't been confirmed,
-     *         {@code NOT_FOUND} if it isn't the caller's, {@code VALIDATION_ERROR} if there is
-     *         nothing to optimise against, {@code UPSTREAM_UNAVAILABLE}/
+     * @throws ApiException {@code NOT_FOUND} if it isn't the caller's, {@code VALIDATION_ERROR}
+     *         if there is nothing to optimise against, {@code UPSTREAM_UNAVAILABLE}/
      *         {@code AI_GENERATION_FAILED} if a dependency fails
      */
     public JdOptimization optimise(String userId, String jobDescriptionId, boolean refresh) {
-        // Ownership and the confirmed-JD requirement are both enforced here, once, by the same
-        // method the analysis endpoint uses — never re-implemented.
+        // Ownership is enforced here, once, by the same method the analysis endpoint uses —
+        // never re-implemented.
         JdAnalysis analysis = jdService.analyse(userId, jobDescriptionId);
         JobDescription jd = jdService.requireOwned(userId, jobDescriptionId);
 

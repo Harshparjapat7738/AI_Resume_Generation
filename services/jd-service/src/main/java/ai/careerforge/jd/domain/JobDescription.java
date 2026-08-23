@@ -154,17 +154,10 @@ public class JobDescription {
         this.experienceSummary = experienceSummary;
     }
 
-    public void confirm() {
-        this.status = JobDescriptionStatus.CONFIRMED;
-        this.confirmedAt = Instant.now();
-        this.confirmedVersion = currentVersion;
-    }
-
     /** Points this JD at a newly-created, immutable {@link JdVersion} (see that class's own
      *  comment) — the raw text itself is never mutated in place, only which version is
-     *  "current" moves forward. Callers (see {@code JdService#editText}) only ever call this
-     *  before {@link #confirm()}; once confirmed, {@code confirmedVersion} is what every later
-     *  read (analysis, generation) pins to, so a JD is never edited out from under it. */
+     *  "current" moves forward. Analysis and optimization always read {@code currentVersion}
+     *  directly — there is no separate confirm step pinning them to an older version. */
     public void applyEdit(int newVersion) {
         this.currentVersion = newVersion;
     }

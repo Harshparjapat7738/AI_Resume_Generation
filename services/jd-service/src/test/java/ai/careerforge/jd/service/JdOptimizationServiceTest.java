@@ -91,14 +91,14 @@ class JdOptimizationServiceTest {
     }
 
     @Test
-    @DisplayName("the confirmed-JD and ownership checks are delegated, never re-implemented")
-    void ownershipAndConfirmationComeFromJdService() {
-        when(jdService.analyse(USER_ID, JD_ID)).thenThrow(new ApiException(ErrorCode.JD_NOT_CONFIRMED));
+    @DisplayName("whatever JdService.analyse throws is delegated, never re-implemented (ADR-037: no confirm gate anymore)")
+    void analysisErrorsComeFromJdService() {
+        when(jdService.analyse(USER_ID, JD_ID)).thenThrow(ApiException.notOwned());
 
         assertThatThrownBy(() -> service.optimise(USER_ID, JD_ID, false))
                 .isInstanceOf(ApiException.class)
                 .extracting(ex -> ((ApiException) ex).code())
-                .isEqualTo(ErrorCode.JD_NOT_CONFIRMED);
+                .isEqualTo(ErrorCode.RESOURCE_NOT_FOUND);
 
         verify(aiServiceClient, never()).optimise(any());
     }

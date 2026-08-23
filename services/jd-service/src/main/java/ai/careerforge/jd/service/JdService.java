@@ -9,7 +9,6 @@ import ai.careerforge.jd.client.JdAnalysisPayload;
 import ai.careerforge.jd.domain.JdAnalysis;
 import ai.careerforge.jd.domain.JdVersion;
 import ai.careerforge.jd.domain.JobDescription;
-import ai.careerforge.jd.domain.JobDescriptionStatus;
 import ai.careerforge.jd.domain.Requirement;
 import ai.careerforge.jd.fetch.JdUrlFetcher;
 import ai.careerforge.jd.fetch.JdUrlFetcher.FetchedPage;
@@ -109,20 +108,14 @@ public class JdService {
     }
 
     /**
-     * Edits the JD's text before it's confirmed — the Review step's "Edit JD" action. Creates a
-     * new, immutable {@link JdVersion} rather than mutating the existing one (see that class's
-     * own comment) and advances {@code currentVersion} to point at it; a JD version that was
-     * ever the basis for a confirmation/analysis is never altered after the fact. Blocked once
-     * {@link JobDescriptionStatus#CONFIRMED} — {@code confirmedVersion} pins analysis to an
-     * exact version, and letting the text keep changing underneath an already-confirmed (and
-     * possibly already-analysed) JD would silently desync the two.
+     * Edits the JD's text — no confirm/review gate exists any more (the workflow analyses and
+     * optimises directly against whatever text is currently submitted), so this is unconditional.
+     * Creates a new, immutable {@link JdVersion} rather than mutating the existing one (see that
+     * class's own comment) and advances {@code currentVersion} to point at it — a JD version that
+     * was ever the basis for an analysis is never altered after the fact.
      */
     public JobDescription editText(String userId, String id, String rawText) {
         JobDescription jd = requireOwned(userId, id);
-        if (jd.status() == JobDescriptionStatus.CONFIRMED) {
-            throw new ApiException(ErrorCode.CONFLICT,
-                    "This job description has already been confirmed and can no longer be edited.");
-        }
 
         String normalised = normalise(rawText);
         int nextVersion = jd.currentVersion() + 1;
@@ -136,23 +129,11 @@ public class JdService {
                 .orElseThrow(() -> new ApiException(ErrorCode.INTERNAL_ERROR));
     }
 
-    public JobDescription confirm(String userId, String id) {
-        JobDescription jd = requireOwned(userId, id);
-        if (jd.status() != JobDescriptionStatus.CONFIRMED) {
-            jd.confirm();
-            jd = jobDescriptions.save(jd);
-        }
-        return jd;
-    }
-
-    /** Computes (or returns the cached) analysis. Requires the JD to already be confirmed. */
+    /** Computes (or returns the cached) analysis for the JD's current text — no confirm step. */
     public JdAnalysis analyse(String userId, String id) {
         JobDescription jd = requireOwned(userId, id);
-        if (jd.status() != JobDescriptionStatus.CONFIRMED) {
-            throw new ApiException(ErrorCode.JD_NOT_CONFIRMED);
-        }
 
-        JdVersion version = jdVersions.findByJobDescriptionIdAndVersion(jd.id(), jd.confirmedVersion())
+        JdVersion version = jdVersions.findByJobDescriptionIdAndVersion(jd.id(), jd.currentVersion())
                 .orElseThrow(() -> new ApiException(ErrorCode.INTERNAL_ERROR));
 
         return jdAnalyses.findByJdVersionId(version.id()).orElseGet(() -> runAnalysis(jd, version));

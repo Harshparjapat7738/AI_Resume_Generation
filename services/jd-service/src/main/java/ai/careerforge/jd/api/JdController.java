@@ -66,20 +66,14 @@ public class JdController {
         return ResponseEntity.ok(toDetail(jd));
     }
 
-    /** The Review step's "Edit JD" action — replaces the pre-confirmation text with a new
-     *  version and returns the same shape {@code GET /{id}} does, so the frontend can just
-     *  swap its cached JD detail for the response body. {@code 409 CONFLICT} once the JD is
-     *  already confirmed (see {@code JdService#editText}). */
+    /** Replaces the JD's text with a new version — unconditional, no confirm gate to block it
+     *  (see {@code JdService#editText}) — and returns the same shape {@code GET /{id}} does, so
+     *  the frontend can just swap its cached JD detail for the response body. */
     @PutMapping("/{id}")
     public ResponseEntity<JdDetailResponse> edit(@CallerId String userId, @PathVariable String id,
                                                   @Valid @RequestBody EditJdRequest request) {
         JobDescription jd = jdService.editText(userId, id, request.jobDescriptionText());
         return ResponseEntity.ok(toDetail(jd));
-    }
-
-    @PostMapping("/{id}/confirm")
-    public ResponseEntity<JdSummaryResponse> confirm(@CallerId String userId, @PathVariable String id) {
-        return ResponseEntity.ok(toSummary(jdService.confirm(userId, id)));
     }
 
     @GetMapping("/{id}/analysis")
@@ -94,9 +88,9 @@ public class JdController {
     }
 
     /**
-     * Optimises the caller's verified profile against this confirmed job description (ADR-033) —
-     * the operation that replaced resume/cover-letter generation. Returns targeting data, never
-     * a document.
+     * Optimises the caller's verified profile against this job description's current text
+     * (ADR-033/ADR-037 — no confirm step) — the operation that replaced resume/cover-letter
+     * generation. Returns targeting data, never a document.
      *
      * <p>Re-reads an existing result for the same JD version rather than spending another AI
      * request; pass {@code refresh=true} to recompute, which is what a profile edit warrants.

@@ -25,7 +25,6 @@ public enum ErrorCode {
     // --- domain ----------------------------------------------------------
     JD_VALIDATION_ERROR(HttpStatus.BAD_REQUEST, "Unable to process the supplied job description."),
     JD_URL_BLOCKED(HttpStatus.BAD_REQUEST, "The supplied URL is not permitted."),
-    JD_NOT_CONFIRMED(HttpStatus.CONFLICT, "The job description must be confirmed before this action."),
     FILE_REJECTED(HttpStatus.BAD_REQUEST, "The uploaded file was rejected."),
     AI_GENERATION_FAILED(HttpStatus.BAD_GATEWAY, "Generation could not be completed. Please retry."),
     AI_GROUNDING_FAILED(HttpStatus.UNPROCESSABLE_ENTITY,
