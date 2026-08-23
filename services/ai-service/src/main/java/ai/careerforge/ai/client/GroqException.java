@@ -8,6 +8,8 @@ public class GroqException extends RuntimeException {
 
     private final boolean retryable;
     private final boolean rateLimited;
+    private final boolean tooLarge;
+    private final Long retryAfterSeconds;
 
     public GroqException(String message, boolean retryable) {
         this(message, retryable, false, null);
@@ -18,9 +20,16 @@ public class GroqException extends RuntimeException {
     }
 
     public GroqException(String message, boolean retryable, boolean rateLimited, Throwable cause) {
+        this(message, retryable, rateLimited, false, null, cause);
+    }
+
+    public GroqException(String message, boolean retryable, boolean rateLimited, boolean tooLarge,
+                         Long retryAfterSeconds, Throwable cause) {
         super(message, cause);
         this.retryable = retryable;
         this.rateLimited = rateLimited;
+        this.tooLarge = tooLarge;
+        this.retryAfterSeconds = retryAfterSeconds;
     }
 
     public boolean isRetryable() {
@@ -39,5 +48,25 @@ public class GroqException extends RuntimeException {
      */
     public boolean isRateLimited() {
         return rateLimited;
+    }
+
+    /**
+     * True for Groq's distinct "this one request alone exceeds the entire limit" class of 429
+     * (as opposed to "you're temporarily out of budget, others already used it") — see ADR-038.
+     * A request in this state cannot succeed by retrying unchanged, at any delay: the payload
+     * itself has to shrink. {@link #isRetryable()} is always {@code false} when this is
+     * {@code true}.
+     */
+    public boolean isTooLarge() {
+        return tooLarge;
+    }
+
+    /**
+     * Groq's own {@code retry-after} (seconds), when the 429 response carried one. {@code null}
+     * when not applicable (not a 429, or Groq didn't send it) — callers fall back to their own
+     * backoff policy in that case.
+     */
+    public Long retryAfterSeconds() {
+        return retryAfterSeconds;
     }
 }

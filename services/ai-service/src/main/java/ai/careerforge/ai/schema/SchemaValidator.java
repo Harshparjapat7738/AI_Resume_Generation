@@ -58,7 +58,7 @@ public class SchemaValidator {
             log.warn("Model output was not valid JSON schema={} reason={}",
                     schemaName, ex.getOriginalMessage());
             throw new SchemaValidationException(schemaName,
-                    List.of("Response was not valid JSON"));
+                    List.of("Response was not valid JSON"), true);
         }
 
         Set<ValidationMessage> errors = schema(schemaName).validate(node);

@@ -1,85 +1,27 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "JD optimization output",
+  "title": "JD requirement adjudication output (ADR-038)",
+  "description": "ID-referenced only, deliberately minimal (ADR-038): keywords, missingRequirements, emphasis and targetRole/targetCompany are computed deterministically downstream (jd-service) from this plus the JD analysis, never asked of the model — the one thing genuinely requiring judgement is whether the pre-selected evidence for a requirement actually demonstrates it.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["keywords", "requirementMatches", "missingRequirements", "emphasis"],
+  "required": ["matches"],
   "properties": {
-    "targetRole": { "type": ["string", "null"], "maxLength": 200 },
-    "targetCompany": { "type": ["string", "null"], "maxLength": 200 },
-
-    "keywords": {
-      "description": "JD vocabulary the candidate should mirror, each classified and — where the profile genuinely supports it — mapped to the evidence that backs it. An empty evidenceIds array means the term is unsupported and must never be claimed.",
+    "matches": {
       "type": "array",
-      "maxItems": 120,
+      "maxItems": 25,
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["term", "priority", "evidenceIds"],
-        "properties": {
-          "term": { "type": "string", "minLength": 1, "maxLength": 100 },
-          "priority": { "type": "string", "enum": ["REQUIRED", "PREFERRED"] },
-          "category": {
-            "type": ["string", "null"],
-            "enum": ["TECHNICAL_SKILL", "SOFT_SKILL", "TOOL", "DOMAIN", "ROLE", "CERTIFICATION", "EDUCATION", "EXPERIENCE", null]
-          },
-          "evidenceIds": {
-            "type": "array",
-            "maxItems": 20,
-            "items": { "type": "string", "pattern": "^(EXP|PROJ|SKILL|CERT|EDU|ACH)-[0-9]{3,4}$" }
-          }
-        }
-      }
-    },
-
-    "requirementMatches": {
-      "description": "Per-JD-requirement verdict. Mirrors evidence-selection's shape deliberately, so downstream consumers read one familiar structure.",
-      "type": "array",
-      "maxItems": 200,
-      "items": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": ["requirementId", "evidenceIds", "matchStrength"],
+        "required": ["requirementId", "evidenceIds", "matchKind"],
         "properties": {
           "requirementId": { "type": "string", "pattern": "^REQ-[0-9]{3,4}$" },
           "evidenceIds": {
             "type": "array",
-            "maxItems": 20,
+            "maxItems": 3,
             "items": { "type": "string", "pattern": "^(EXP|PROJ|SKILL|CERT|EDU|ACH)-[0-9]{3,4}$" }
           },
-          "matchStrength": { "type": "string", "enum": ["STRONG", "PARTIAL", "NONE"] },
-          "reason": { "type": "string", "maxLength": 300 }
-        }
-      }
-    },
-
-    "missingRequirements": {
-      "description": "Requirements no evidence supports. Reported as gaps only — never accompanied by advice to claim them.",
-      "type": "array",
-      "maxItems": 200,
-      "items": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": ["requirementId"],
-        "properties": {
-          "requirementId": { "type": "string", "pattern": "^REQ-[0-9]{3,4}$" },
-          "note": { "type": "string", "maxLength": 300 }
-        }
-      }
-    },
-
-    "emphasis": {
-      "description": "Which of the candidate's own evidence to lead with, ranked. Selection and ordering only — the rationale describes why existing evidence fits, and states no new fact.",
-      "type": "array",
-      "maxItems": 40,
-      "items": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": ["evidenceId", "rank"],
-        "properties": {
-          "evidenceId": { "type": "string", "pattern": "^(EXP|PROJ|SKILL|CERT|EDU|ACH)-[0-9]{3,4}$" },
-          "rank": { "type": "integer", "minimum": 1, "maximum": 40 },
-          "rationale": { "type": "string", "maxLength": 300 }
+          "confidence": { "type": ["number", "null"], "minimum": 0, "maximum": 1 },
+          "matchKind": { "type": "string", "enum": ["STRONG", "PARTIAL", "NONE"] }
         }
       }
     }

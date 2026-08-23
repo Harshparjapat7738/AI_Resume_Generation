@@ -20,25 +20,28 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 /**
- * Turns a confirmed JD plus the candidate's verified evidence into structured targeting data:
- * which of the posting's terms matter, which of them the candidate can actually back, which
- * requirements are unsupported, and what to lead with (ADR-033).
+ * Requirement adjudication (ADR-038, superseding the single-call design ADR-033 introduced):
+ * given a job's requirements and the candidate's evidence — <strong>already pre-selected by the
+ * caller for relevance to those specific requirements</strong>, never the caller's whole
+ * inventory — decides, per requirement, whether the evidence actually demonstrates it.
  *
- * <p><strong>This stage writes no candidate-facing prose.</strong> That is the whole point of
- * the product change it belongs to: CareerForge no longer generates a resume or cover letter, so
- * there is no generated sentence to ground. What it emits is selection, classification, ranking
- * and mapping over evidence the user already supplied — every candidate-facing fact in the
- * output is an {@code evidenceId} pointing back into their own profile.
+ * <p>This is deliberately the only judgement call this stage makes. Everything ADR-033's single
+ * call used to also produce here — keyword prioritisation, missing-requirement reporting, and
+ * emphasis ordering — is <strong>computed deterministically downstream</strong> (jd-service,
+ * from this result plus the JD analysis already on hand) rather than asked of the model a second
+ * time in a smaller call: none of those three are actually judgement calls (a missing
+ * requirement is a set difference; emphasis is a weighted sort; keyword classification reuses
+ * the analysis's own requirement types), so paying an LLM call for them was pure waste, not
+ * decomposition. See ARCHITECTURE_DECISIONS.md ADR-038 for the full reasoning and the token-cost
+ * comparison against the four-call decomposition that was considered and rejected.
  *
- * <p>Groq only, like every other JSON operation (ADR-032). Single-shot: unlike the content
- * stages it replaces, there is no regenerate-once loop, because there is no prose whose wording
- * could be corrected on a retry — an id the model invented is simply removed here and now, which
- * is deterministic and cheaper than another model call.
+ * <p><strong>This stage writes no candidate-facing prose.</strong> What it emits is a verdict per
+ * requirement, referencing only the evidence ids it was given — every candidate-facing fact in
+ * the final, merged result is still an {@code evidenceId} pointing back into the profile.
  *
- * <p><strong>Unknown ids are stripped, not trusted</strong> ({@link #stripUnknownIds}), the same
- * defence {@code EvidenceSelectionService} has always applied: a hallucinated {@code EXP-999}
- * must never reach persistence, a downstream consumer, or the prompt the user pastes into
- * another platform. A citation that survives is one the profile really contains.
+ * <p>Groq only, like every other JSON operation (ADR-032). Single-shot: there is no prose whose
+ * wording could be corrected on a retry — an id the model invented is simply removed here and
+ * now (see {@link #stripUnknownIds}), which is deterministic and cheaper than another model call.
  */
 @Service
 public class JdOptimizationService {
@@ -47,7 +50,14 @@ public class JdOptimizationService {
 
     private static final String PROMPT = "jd-optimization";
     private static final String SCHEMA = "jd-optimization.schema.json";
-    private static final int MAX_EVIDENCE_CHARS = 40_000;
+    /** The caller is expected to have already filtered evidence down to a handful of candidates
+     *  per requirement (jd-service's deterministic pre-filtering, ADR-038) — this is a ceiling
+     *  against a caller bug, not the primary size control. */
+    private static final int MAX_EVIDENCE_CHARS = 12_000;
+    private static final int MAX_REQUIREMENTS_CHARS = 8_000;
+    /** ADR-038: adjudication returns ids and a verdict only — nowhere near what the old
+     *  four-field, free-text-bearing output needed. */
+    private static final int MAX_COMPLETION_TOKENS = 1_000;
 
     private final AiChatClient aiChatClient;
     private final AiGenerationSupport support;
@@ -61,8 +71,9 @@ public class JdOptimizationService {
         PromptRegistry.Prompt prompt = support.resolvePrompt(PROMPT, request.promptVersion());
         String userContent = buildUserContent(request);
 
-        AiChatClient.AiChatResult result = aiChatClient.complete(prompt.body(), userContent, PROMPT);
-        JsonNode optimisation = support.validateSchema(result.content(), SCHEMA, PROMPT);
+        AiGenerationSupport.ValidatedCompletion completion = support.completeAndValidate(
+                aiChatClient, prompt.body(), userContent, PROMPT, SCHEMA, MAX_COMPLETION_TOKENS);
+        JsonNode adjudication = completion.content();
 
         Set<String> knownEvidenceIds = request.evidence().stream()
                 .map(EvidenceItem::evidenceId)
@@ -71,87 +82,59 @@ public class JdOptimizationService {
                 .map(AiRequests.RequirementInput::requirementId)
                 .collect(Collectors.toCollection(LinkedHashSet::new));
 
-        stripUnknownIds(optimisation, knownEvidenceIds, knownRequirementIds);
+        stripUnknownIds(adjudication, knownEvidenceIds, knownRequirementIds);
 
-        return new AiResponses.JdOptimizationResponse(optimisation,
-                new AiResponses.Provenance(prompt.versionLabel(), result.model(),
-                        result.totalTokens(), false));
+        return new AiResponses.JdOptimizationResponse(adjudication,
+                new AiResponses.Provenance(prompt.versionLabel(), completion.result().model(),
+                        completion.result().totalTokens(), completion.repaired()));
     }
 
     // ------------------------------------------------------------------ prompt ----
 
     private String buildUserContent(AiRequests.JdOptimizationRequest request) {
-        String jobContext = "Role: " + UntrustedContent.sanitise(request.jobTitle()) + "\n"
-                + "Company: " + (hasText(request.company())
-                        ? UntrustedContent.sanitise(request.company()) : "(not stated — do not invent one)") + "\n"
-                + "Seniority: " + UntrustedContent.sanitise(request.seniority()) + "\n"
-                + "Requirements:\n"
-                + request.requirements().stream()
-                        .map(r -> "- [" + r.requirementId() + " | " + r.type() + " | weight " + r.weight() + "] "
-                                + UntrustedContent.sanitise(r.text()))
-                        .collect(Collectors.joining("\n"));
-
-        String keywords = request.keywords() == null || request.keywords().isEmpty()
-                ? "(none extracted)"
-                : request.keywords().stream().map(UntrustedContent::sanitise).collect(Collectors.joining(", "));
+        String requirements = request.requirements().stream()
+                .map(r -> "[" + r.requirementId() + " | " + r.type() + " | weight " + r.weight() + "] "
+                        + UntrustedContent.sanitise(r.text()))
+                .collect(Collectors.joining("\n"));
 
         String evidence = request.evidence().stream()
                 .map(item -> "[" + item.evidenceId() + "] " + item.type() + " — "
                         + UntrustedContent.sanitise(item.searchableText()))
                 .collect(Collectors.joining("\n"));
 
-        return UntrustedContent.fence("JOB_CONTEXT", jobContext, 30_000) + "\n\n"
-                + UntrustedContent.fence("KEYWORDS", keywords, 8_000) + "\n\n"
+        return UntrustedContent.fence("REQUIREMENTS", requirements, MAX_REQUIREMENTS_CHARS) + "\n\n"
                 + UntrustedContent.fence("EVIDENCE", evidence, MAX_EVIDENCE_CHARS);
     }
 
     // ------------------------------------------------------------------ filter ----
 
-    /**
-     * Removes every citation the model invented, across all four sections.
-     *
-     * <p>An unknown <em>evidence</em> id is dropped from wherever it appears; a keyword or match
-     * left with no evidence at all is kept, downgraded to the honest "unsupported" state
-     * ({@code matchStrength: NONE}, empty {@code evidenceIds}) rather than deleted — the gap is
-     * information the user needs, not noise. An entry keyed by an unknown <em>requirement</em>
-     * id, by contrast, refers to a requirement that does not exist in this posting at all, so
-     * there is nothing to report against and the whole entry goes.
-     */
-    private void stripUnknownIds(JsonNode optimisation, Set<String> knownEvidenceIds, Set<String> knownRequirementIds) {
+    /** Removes every citation the model invented, and drops a whole entry keyed by a requirement
+     *  id that was never in the input. */
+    private void stripUnknownIds(JsonNode adjudication, Set<String> knownEvidenceIds, Set<String> knownRequirementIds) {
         Set<String> removedEvidence = new HashSet<>();
         int removedEntries = 0;
 
-        for (JsonNode keyword : optimisation.path("keywords")) {
-            removedEvidence.addAll(pruneEvidenceIds(keyword.path("evidenceIds"), knownEvidenceIds));
-        }
-
-        removedEntries += pruneByRequirementId(optimisation.path("requirementMatches"), knownRequirementIds);
-        for (JsonNode match : optimisation.path("requirementMatches")) {
-            Set<String> dropped = pruneEvidenceIds(match.path("evidenceIds"), knownEvidenceIds);
-            removedEvidence.addAll(dropped);
-            // A match whose every citation was invented is not a match. Say so plainly rather
-            // than leaving a STRONG verdict standing on nothing.
-            if (match.path("evidenceIds").isEmpty() && match instanceof ObjectNode object) {
-                object.put("matchStrength", "NONE");
-            }
-        }
-
-        removedEntries += pruneByRequirementId(optimisation.path("missingRequirements"), knownRequirementIds);
-
-        if (optimisation.path("emphasis") instanceof ArrayNode emphasis) {
-            for (int i = emphasis.size() - 1; i >= 0; i--) {
-                String evidenceId = emphasis.get(i).path("evidenceId").asText(null);
-                if (evidenceId == null || !knownEvidenceIds.contains(evidenceId)) {
-                    removedEvidence.add(String.valueOf(evidenceId));
-                    emphasis.remove(i);
+        if (adjudication.path("matches") instanceof ArrayNode matches) {
+            for (int i = matches.size() - 1; i >= 0; i--) {
+                JsonNode match = matches.get(i);
+                String requirementId = match.path("requirementId").asText(null);
+                if (requirementId == null || !knownRequirementIds.contains(requirementId)) {
+                    matches.remove(i);
                     removedEntries++;
+                    continue;
+                }
+                Set<String> dropped = pruneEvidenceIds(match.path("evidenceIds"), knownEvidenceIds);
+                removedEvidence.addAll(dropped);
+                if (match.path("evidenceIds").isEmpty() && match instanceof ObjectNode object
+                        && !"NONE".equals(match.path("matchKind").asText())) {
+                    object.put("matchKind", "NONE");
                 }
             }
         }
 
         if (!removedEvidence.isEmpty() || removedEntries > 0) {
             log.warn("Stripped {} hallucinated evidence id(s) and {} entry/entries with unknown ids "
-                    + "from JD optimisation output", removedEvidence.size(), removedEntries);
+                    + "from adjudication output", removedEvidence.size(), removedEntries);
         }
     }
 
@@ -171,42 +154,11 @@ public class JdOptimizationService {
         return removed;
     }
 
-    /** Drops whole entries keyed by a requirement id this posting never had. */
-    private int pruneByRequirementId(JsonNode arrayNode, Set<String> knownRequirementIds) {
-        if (!(arrayNode instanceof ArrayNode entries)) {
-            return 0;
-        }
-        int removed = 0;
-        for (int i = entries.size() - 1; i >= 0; i--) {
-            String requirementId = entries.get(i).path("requirementId").asText(null);
-            if (requirementId == null || !knownRequirementIds.contains(requirementId)) {
-                entries.remove(i);
-                removed++;
-            }
-        }
-        return removed;
-    }
-
-    private static boolean hasText(String value) {
-        return value != null && !value.isBlank();
-    }
-
-    /** The evidence ids cited anywhere in a validated optimisation — what a caller persists as
-     *  the provenance of this result, and what proves every candidate-facing fact traces back to
-     *  the user's own profile. */
-    public static List<String> citedEvidenceIds(JsonNode optimisation) {
+    /** Every evidence id cited anywhere in a validated adjudication. */
+    public static List<String> citedEvidenceIds(JsonNode adjudication) {
         Set<String> ids = new LinkedHashSet<>();
-        for (JsonNode keyword : optimisation.path("keywords")) {
-            keyword.path("evidenceIds").forEach(id -> ids.add(id.asText()));
-        }
-        for (JsonNode match : optimisation.path("requirementMatches")) {
+        for (JsonNode match : adjudication.path("matches")) {
             match.path("evidenceIds").forEach(id -> ids.add(id.asText()));
-        }
-        for (JsonNode item : optimisation.path("emphasis")) {
-            String id = item.path("evidenceId").asText(null);
-            if (id != null) {
-                ids.add(id);
-            }
         }
         return new ArrayList<>(ids);
     }

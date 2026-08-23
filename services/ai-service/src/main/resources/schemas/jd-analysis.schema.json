@@ -16,14 +16,14 @@
     "yearsOfExperienceMax": { "type": ["number", "null"], "minimum": 0, "maximum": 60 },
     "requirements": {
       "type": "array",
-      "maxItems": 200,
+      "maxItems": 25,
       "items": {
         "type": "object",
         "additionalProperties": false,
         "required": ["requirementId", "text", "type", "weight"],
         "properties": {
           "requirementId": { "type": "string", "pattern": "^REQ-[0-9]{3,4}$" },
-          "text": { "type": "string", "minLength": 1, "maxLength": 1000 },
+          "text": { "type": "string", "minLength": 1, "maxLength": 400 },
           "type": {
             "type": "string",
             "enum": ["HARD_REQUIRED", "PREFERRED", "RESPONSIBILITY", "SKILL",
@@ -32,7 +32,7 @@
           "weight": { "type": "integer", "minimum": 1, "maximum": 5 },
           "normalisedTerms": {
             "type": "array",
-            "maxItems": 30,
+            "maxItems": 8,
             "items": { "type": "string", "maxLength": 100 }
           }
         }
@@ -40,7 +40,7 @@
     },
     "keywords": {
       "type": "array",
-      "maxItems": 150,
+      "maxItems": 40,
       "items": { "type": "string", "maxLength": 100 }
     }
   }

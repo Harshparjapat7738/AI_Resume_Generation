@@ -3,6 +3,7 @@ package ai.careerforge.ai.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
@@ -25,15 +26,18 @@ import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 
 /**
- * {@link JdOptimizationService} — the operation that replaced resume/cover-letter content
- * generation (ADR-033). The properties that matter here are that it produces targeting data
- * rather than prose, and that no candidate-facing value survives unless the supplied evidence
- * inventory actually contains it.
+ * {@link JdOptimizationService} — requirement adjudication (ADR-038, superseding ADR-033's
+ * single, larger call). Since ADR-038 this stage judges only; it no longer produces keywords,
+ * missingRequirements, emphasis or free-text rationale — those are computed deterministically
+ * downstream (jd-service's {@code OptimizationMerge}) from this result plus the JD analysis
+ * already on hand. What still matters here: no candidate-facing value survives unless the
+ * supplied evidence/requirement ids actually contain it, and the call reserves a tight
+ * completion-token ceiling rather than the old blanket 4,096.
  */
 class JdOptimizationServiceTest {
 
     private static final PromptRegistry.Prompt PROMPT =
-            new PromptRegistry.Prompt("jd-optimization", 1, "You analyse a JD against evidence.");
+            new PromptRegistry.Prompt("jd-optimization", 2, "You adjudicate requirements against evidence.");
 
     private final ObjectMapper objectMapper = new ObjectMapper();
     private AiChatClient aiChatClient;
@@ -54,74 +58,72 @@ class JdOptimizationServiceTest {
                 "Backend Engineer", "Acme Corp", "Senior",
                 List.of(new RequirementInput("REQ-001", "5 years of Java", "HARD_REQUIRED", 5),
                         new RequirementInput("REQ-002", "Kafka in production", "PREFERRED", 3)),
-                List.of("Java", "Kafka"),
+                List.of(),
                 List.of(new EvidenceItem("EXP-004", "EXPERIENCE", "Backend Engineer", "Acme",
                         "Built Java services.", List.of("Java"), List.of(), "2019", "Present")),
                 null);
     }
 
-    /** Stubs schema validation to return the model's own JSON, so these tests exercise this
-     *  service's filtering rather than re-testing {@code SchemaValidator}. */
+    /** Stubs {@code completeAndValidate} to return the model's own (already-parsed) JSON, so
+     *  these tests exercise this service's id-stripping rather than re-testing
+     *  {@code AiGenerationSupport}/{@code SchemaValidator}. */
     private void modelReturns(String json) throws Exception {
-        when(aiChatClient.complete(anyString(), anyString(), anyString()))
-                .thenReturn(new AiChatClient.AiChatResult(json, "openai/gpt-oss-120b", 42));
-        when(support.validateSchema(eq(json), eq("jd-optimization.schema.json"), eq("jd-optimization")))
-                .thenReturn(objectMapper.readTree(json));
+        JsonNode parsed = objectMapper.readTree(json);
+        AiChatClient.AiChatResult raw = new AiChatClient.AiChatResult(json, "openai/gpt-oss-120b", 42);
+        when(support.completeAndValidate(eq(aiChatClient), eq(PROMPT.body()), anyString(),
+                eq("jd-optimization"), eq("jd-optimization.schema.json"), eq(1_000)))
+                .thenReturn(new AiGenerationSupport.ValidatedCompletion(parsed, raw, false));
     }
 
     @Nested
     class Output {
 
         @Test
-        void returnsTargetingDataWithProvenance() throws Exception {
+        void returnsMatchesOnlyWithProvenance() throws Exception {
             modelReturns("""
-                    {"targetRole":"Backend Engineer","targetCompany":"Acme Corp",
-                     "keywords":[{"term":"Java","priority":"REQUIRED","category":"TECHNICAL_SKILL","evidenceIds":["EXP-004"]}],
-                     "requirementMatches":[{"requirementId":"REQ-001","evidenceIds":["EXP-004"],"matchStrength":"STRONG","reason":"Java services"}],
-                     "missingRequirements":[{"requirementId":"REQ-002","note":"No Kafka evidence"}],
-                     "emphasis":[{"evidenceId":"EXP-004","rank":1,"rationale":"Directly relevant"}]}""");
+                    {"matches":[{"requirementId":"REQ-001","evidenceIds":["EXP-004"],"confidence":0.9,"matchKind":"STRONG"}]}""");
 
             AiResponses.JdOptimizationResponse response = service.optimise(request());
 
             JsonNode out = response.optimisation();
-            assertThat(out.path("targetRole").asText()).isEqualTo("Backend Engineer");
-            assertThat(out.path("keywords")).hasSize(1);
-            assertThat(out.path("requirementMatches").get(0).path("matchStrength").asText()).isEqualTo("STRONG");
-            assertThat(out.path("missingRequirements").get(0).path("requirementId").asText()).isEqualTo("REQ-002");
-            assertThat(response.provenance().promptVersion()).isEqualTo("jd-optimization@v1");
+            assertThat(out.path("matches")).hasSize(1);
+            assertThat(out.path("matches").get(0).path("matchKind").asText()).isEqualTo("STRONG");
+            assertThat(response.provenance().promptVersion()).isEqualTo("jd-optimization@v2");
             assertThat(response.provenance().model()).isEqualTo("openai/gpt-oss-120b");
         }
 
         @Test
-        @DisplayName("the JD, its keywords and the evidence are all fenced as untrusted data")
-        void fencesEveryUntrustedBlock() throws Exception {
+        @DisplayName("requirements and evidence are fenced as untrusted data — never raw JD text, never the whole keyword list")
+        void fencesRequirementsAndEvidenceOnly() throws Exception {
             modelReturns("""
-                    {"keywords":[],"requirementMatches":[],"missingRequirements":[],"emphasis":[]}""");
+                    {"matches":[]}""");
 
             service.optimise(request());
 
             var captor = org.mockito.ArgumentCaptor.forClass(String.class);
-            verify(aiChatClient).complete(eq(PROMPT.body()), captor.capture(), eq("jd-optimization"));
-            assertThat(captor.getValue()).contains("JOB_CONTEXT").contains("KEYWORDS").contains("EVIDENCE");
+            verify(support).completeAndValidate(eq(aiChatClient), eq(PROMPT.body()), captor.capture(),
+                    eq("jd-optimization"), eq("jd-optimization.schema.json"), eq(1_000));
+            assertThat(captor.getValue()).contains("REQUIREMENTS").contains("EVIDENCE")
+                    .doesNotContain("JOB_CONTEXT").doesNotContain("KEYWORDS");
         }
 
         @Test
         void providerFailurePropagatesUnchanged() {
-            when(aiChatClient.complete(anyString(), anyString(), anyString()))
+            when(support.completeAndValidate(any(), any(), any(), any(), any(), anyInt()))
                     .thenThrow(new GroqException("Groq unavailable after 2 retries", true));
 
             assertThatThrownBy(() -> service.optimise(request())).isInstanceOf(GroqException.class);
         }
 
         @Test
-        @DisplayName("calls the provider exactly once — no regenerate loop, since there is no prose to correct")
+        @DisplayName("calls the provider exactly once — no regenerate loop, since a repair (if any) is inside completeAndValidate")
         void isSingleShot() throws Exception {
             modelReturns("""
-                    {"keywords":[],"requirementMatches":[],"missingRequirements":[],"emphasis":[]}""");
+                    {"matches":[]}""");
 
             service.optimise(request());
 
-            verify(aiChatClient).complete(anyString(), anyString(), anyString());
+            verify(support).completeAndValidate(any(), any(), any(), any(), any(), anyInt());
         }
     }
 
@@ -129,76 +131,44 @@ class JdOptimizationServiceTest {
     class Grounding {
 
         @Test
-        @DisplayName("evidence ids the profile doesn't contain are stripped everywhere they appear")
+        @DisplayName("evidence ids the profile doesn't contain are stripped, downgrading the match to NONE")
         void stripsHallucinatedEvidenceIds() throws Exception {
             modelReturns("""
-                    {"keywords":[{"term":"Java","priority":"REQUIRED","evidenceIds":["EXP-004","EXP-999"]}],
-                     "requirementMatches":[{"requirementId":"REQ-001","evidenceIds":["EXP-004","PROJ-777"],"matchStrength":"STRONG"}],
-                     "missingRequirements":[],
-                     "emphasis":[{"evidenceId":"EXP-004","rank":1},{"evidenceId":"CERT-123","rank":2}]}""");
+                    {"matches":[{"requirementId":"REQ-001","evidenceIds":["EXP-004","PROJ-777"],"matchKind":"STRONG"}]}""");
 
             JsonNode out = service.optimise(request()).optimisation();
 
-            assertThat(ids(out.path("keywords").get(0).path("evidenceIds"))).containsExactly("EXP-004");
-            assertThat(ids(out.path("requirementMatches").get(0).path("evidenceIds"))).containsExactly("EXP-004");
-            assertThat(out.path("emphasis")).hasSize(1);
-            assertThat(out.path("emphasis").get(0).path("evidenceId").asText()).isEqualTo("EXP-004");
+            assertThat(ids(out.path("matches").get(0).path("evidenceIds"))).containsExactly("EXP-004");
         }
 
         @Test
         @DisplayName("a match left with no real evidence is downgraded to NONE, not left claiming STRONG")
         void downgradesUnsupportedMatches() throws Exception {
             modelReturns("""
-                    {"keywords":[],
-                     "requirementMatches":[{"requirementId":"REQ-002","evidenceIds":["EXP-999"],"matchStrength":"STRONG"}],
-                     "missingRequirements":[],"emphasis":[]}""");
+                    {"matches":[{"requirementId":"REQ-002","evidenceIds":["EXP-999"],"matchKind":"STRONG"}]}""");
 
-            JsonNode match = service.optimise(request()).optimisation().path("requirementMatches").get(0);
+            JsonNode match = service.optimise(request()).optimisation().path("matches").get(0);
 
             assertThat(match.path("evidenceIds")).isEmpty();
-            assertThat(match.path("matchStrength").asText()).isEqualTo("NONE");
+            assertThat(match.path("matchKind").asText()).isEqualTo("NONE");
         }
 
         @Test
-        @DisplayName("entries keyed by a requirement this posting never had are dropped entirely")
+        @DisplayName("an entry keyed by a requirement this posting never had is dropped entirely")
         void dropsUnknownRequirementIds() throws Exception {
             modelReturns("""
-                    {"keywords":[],
-                     "requirementMatches":[{"requirementId":"REQ-999","evidenceIds":["EXP-004"],"matchStrength":"STRONG"}],
-                     "missingRequirements":[{"requirementId":"REQ-888","note":"invented"}],
-                     "emphasis":[]}""");
+                    {"matches":[{"requirementId":"REQ-999","evidenceIds":["EXP-004"],"matchKind":"STRONG"}]}""");
 
             JsonNode out = service.optimise(request()).optimisation();
 
-            assertThat(out.path("requirementMatches")).isEmpty();
-            assertThat(out.path("missingRequirements")).isEmpty();
-        }
-
-        @Test
-        @DisplayName("an unsupported keyword is kept with no evidence — the gap is the point")
-        void keepsUnsupportedKeywordsAsGaps() throws Exception {
-            modelReturns("""
-                    {"keywords":[{"term":"Kafka","priority":"PREFERRED","evidenceIds":[]}],
-                     "requirementMatches":[],
-                     "missingRequirements":[{"requirementId":"REQ-002","note":"No Kafka evidence"}],
-                     "emphasis":[]}""");
-
-            JsonNode out = service.optimise(request()).optimisation();
-
-            assertThat(out.path("keywords")).hasSize(1);
-            assertThat(out.path("keywords").get(0).path("term").asText()).isEqualTo("Kafka");
-            assertThat(out.path("keywords").get(0).path("evidenceIds")).isEmpty();
-            assertThat(out.path("missingRequirements")).hasSize(1);
+            assertThat(out.path("matches")).isEmpty();
         }
 
         @Test
         @DisplayName("every cited id in the final result exists in the supplied inventory")
         void citedEvidenceIdsAreAllReal() throws Exception {
             modelReturns("""
-                    {"keywords":[{"term":"Java","priority":"REQUIRED","evidenceIds":["EXP-004","EXP-999"]}],
-                     "requirementMatches":[{"requirementId":"REQ-001","evidenceIds":["EXP-004"],"matchStrength":"STRONG"}],
-                     "missingRequirements":[],
-                     "emphasis":[{"evidenceId":"EXP-004","rank":1}]}""");
+                    {"matches":[{"requirementId":"REQ-001","evidenceIds":["EXP-004","EXP-999"],"matchKind":"STRONG"}]}""");
 
             JsonNode out = service.optimise(request()).optimisation();
 

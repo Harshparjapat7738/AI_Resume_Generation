@@ -5,7 +5,6 @@ import ai.careerforge.ai.api.dto.AiResponses;
 import ai.careerforge.ai.client.AiChatClient;
 import ai.careerforge.ai.prompt.PromptRegistry;
 import ai.careerforge.ai.prompt.UntrustedContent;
-import com.fasterxml.jackson.databind.JsonNode;
 import org.springframework.stereotype.Service;
 
 /**
@@ -30,6 +29,10 @@ public class JdAnalysisService {
     private static final String PROMPT = "jd-analysis";
     private static final String SCHEMA = "jd-analysis.schema.json";
     private static final int MAX_JD_CHARS = 40_000;
+    /** ADR-038: this call's schema caps requirements/keywords tightly (v2 prompt), so it never
+     *  legitimately needs the old blanket 4,096 — reserving that much at admission wasted more
+     *  than half the account's whole per-minute token budget on one call for no benefit. */
+    private static final int MAX_COMPLETION_TOKENS = 1_200;
 
     private final AiChatClient aiChatClient;
     private final AiGenerationSupport support;
@@ -45,11 +48,11 @@ public class JdAnalysisService {
         String fenced = UntrustedContent.fence(
                 "JOB_DESCRIPTION", request.jobDescriptionText(), MAX_JD_CHARS);
 
-        AiChatClient.AiChatResult result = aiChatClient.complete(prompt.body(), fenced, PROMPT);
-        JsonNode analysis = support.validateSchema(result.content(), SCHEMA, PROMPT);
+        AiGenerationSupport.ValidatedCompletion completion = support.completeAndValidate(
+                aiChatClient, prompt.body(), fenced, PROMPT, SCHEMA, MAX_COMPLETION_TOKENS);
 
-        return new AiResponses.JdAnalysisResponse(analysis,
-                new AiResponses.Provenance(prompt.versionLabel(), result.model(),
-                        result.totalTokens(), false));
+        return new AiResponses.JdAnalysisResponse(completion.content(),
+                new AiResponses.Provenance(prompt.versionLabel(), completion.result().model(),
+                        completion.result().totalTokens(), completion.repaired()));
     }
 }
