@@ -44,6 +44,7 @@ implementation reality required a choice the blueprint did not make.
 | [ADR-035](#adr-035) | `notification-service` removed: it never grew past a wired-up bootstrap skeleton (no controller, no domain logic, no Redis Stream consumer was ever implemented) and had zero active callers anywhere in the platform. Candidate-facing email (application-service) is unaffected | Accepted |
 | [ADR-036](#adr-036) | Resume and Cover Letter generation reintroduced across three separated responsibilities: `ai-service` generates grounded content fragments only, `application-service` deterministically assembles the versioned `ResumeDocumentModel`/`CoverLetterDocumentModel` and owns orchestration/persistence, and a new, narrow `render-service` renders that model — and only that model — into a PDF via Thymeleaf + Open HTML to PDF and verifies the artifact. `document-service` is not reintroduced, ADR-034 "My Templates" is untouched, no ATS/outcome score is produced anywhere in the pipeline (deterministic coverage facts only), ATS structural scoring stays deferred to a follow-up ADR | Accepted |
 | [ADR-037](#adr-037) | The JD Confirm step and the standalone Review/"Generate application" page are removed from the generation flow; Skill Gap becomes its own step, positioned between JD entry and Output Type. New flow: JD → Skill Gap → Output Type → Generate/Processing → Result. `jd-service`'s confirm gate (`JdService.confirm`, the `POST /{id}/confirm` endpoint, the `JD_NOT_CONFIRMED` check in `analyse`/`optimise`) is deleted; analysis and optimization now always read `currentVersion` directly. No new AI workflow, no change to JD analysis/skill-gap/profile/evidence/output-generation logic — the real Groq JD-optimization call simply moves to run automatically on the Skill Gap step instead of behind a separate confirm click | Accepted |
+| [ADR-038](#adr-038) | Groq rate-limit redesign for JD optimization: the old single "jd-optimization" call is replaced with an adjudication-only call (matches/confidence/matchKind, no free text) fed only requirements plus deterministically pre-filtered evidence (jd-service's new `EvidenceMatcher`); keywords, missingRequirements, emphasis, targetRole/targetCompany are now computed deterministically (`OptimizationMerge`) instead of asked of the model. Per-operation `max_completion_tokens` replaces the old blanket 4,096 (analysis 1,200, adjudication 1,000). `GroqClient` now captures rate-limit headers, distinguishes a "too large" 429 (never retried) from a temporary one (one retry honouring `retry-after`), and never retries a truncated response. Redis-backed single-flight coalesces concurrent identical requests; adding one skill from the Skill Gap screen patches the cached result deterministically (`derived`/`stale` flags) instead of re-running Groq. Cold path: ≤2 Groq calls (analysis + adjudication, or 1 if every requirement is a zero-candidate gap). Warm path: 1. Skill-gap addition: 0. The persisted/frontend-facing `optimisation` JSON shape is unchanged — no frontend contract change beyond the additive `derived`/`stale` fields | Accepted |
 
 ---
 
@@ -3659,3 +3660,101 @@ Skill Gap its own step, so the flow is exactly:
   — updated for the new step order and verified to parse (`playwright test --list`); none of these
   suites were run against the live stack as part of this change (per this repo's existing e2e
   convention, they require the full stack running).
+
+---
+
+# ADR-038
+
+## Decision
+
+Live testing of the Skill Gap step surfaced a real Groq 429 ("The AI provider's rate limit was
+reached"). Tracing the actual call graph (`jd-service`'s `JdOptimizationService.optimise` →
+`jdService.analyse` → `ai-service`'s `jd-analysis` call, then → `ai-service`'s `jd-optimization`
+call) against real logged Groq usage showed the account's own per-minute budget was the binding
+constraint: one `jd-analysis` call alone measured up to ~5,000 real tokens, and the very next
+`jd-optimization` call — reserving the old blanket `max_completion_tokens=4,096` at admission
+regardless of what it would actually use — had no headroom left. Every `jd-optimization` attempt
+in that session's logs failed (rate-limited after retries, or once truncated at the 4,096-token
+output cap). This record restructures the pipeline so a single Skill Gap visit costs at most two
+Groq calls, each reserving only what its (now much narrower) schema can possibly need, rather than
+fixing the symptom with more retries or a bigger token ceiling.
+
+- **The single "jd-optimization" call becomes adjudication-only.** The model's job shrinks to
+  exactly one judgement — for each requirement it is given, does the (already pre-selected)
+  evidence demonstrate it — returning `{"matches":[{requirementId, evidenceIds, confidence,
+  matchKind}]}` and nothing else (`prompts/jd-optimization/v2.txt`,
+  `schemas/jd-optimization.schema.json`, both narrowed accordingly). Keyword classification,
+  missing-requirement reporting and emphasis ordering were never actually judgement calls — a
+  missing requirement is a set difference, emphasis is a weighted sort, and a keyword's
+  REQUIRED/PREFERRED priority reuses the JD analysis's own requirement types — so asking an LLM
+  for them a second time was pure waste, not decomposition. They are now computed deterministically
+  by a new `OptimizationMerge` (jd-service), from the adjudication result plus the JD analysis
+  already on hand. **The persisted and frontend-facing `optimisation` JSON shape is unchanged** —
+  `targetRole`, `targetCompany`, `keywords[]`, `requirementMatches[]`, `missingRequirements[]`,
+  `emphasis[]` — so nothing downstream (the Skill Gap page, the optimization result page) needed
+  to change beyond the two new additive `derived`/`stale` fields (see below).
+- **Evidence is deterministically pre-filtered before it ever reaches Groq.** A new
+  `EvidenceMatcher` (jd-service) lexically scores every evidence item against every requirement
+  (normalised-term/token overlap — there is no embedding model anywhere in this codebase, and
+  adding one was out of scope; this is a deliberate, conservative trade against occasionally
+  missing a differently-worded transferable match), keeps the top 3–5 candidates per requirement,
+  adds a fixed anchor set (most recent experience(s), any certifications) regardless of score, and
+  caps the union globally (≤40 units, ≤6,000 chars). A requirement with zero candidates at all
+  never reaches the adjudication call — it is reported as a deterministic gap immediately. The
+  previous design sent the caller's *entire* evidence inventory, uncapped in count, blindly
+  truncated to 40,000 characters only at the very end.
+- **Per-operation completion-token budgets replace the old blanket 4,096.** `AiChatClient.complete`
+  gained a per-call `maxCompletionTokensOverride` overload (the 3-arg form is unchanged for
+  `EvidenceSelectionService`/`EmailContentService`, neither touched by this record); `jd-analysis`
+  now reserves 1,200, adjudication 1,000 — both schemas were tightened to match (analysis:
+  ≤25 requirements, ≤8 normalisedTerms, ≤400-char requirement text, ≤40 keywords; adjudication:
+  ≤25 matches, ≤3 evidence ids per match, no free-text field at all).
+- **`GroqClient` now reads what it always threw away.** Every response's rate-limit headers
+  (`retry-after`, `x-ratelimit-*`) are captured and logged. A 429 is classified before any retry
+  decision: Groq's "this single request alone exceeds the whole limit" wording (`GroqException
+  .isTooLarge()`) is never retried, at any delay — no amount of waiting fixes an oversized single
+  request; a temporary 429 gets exactly one retry, honouring `retry-after` when Groq sent one
+  instead of guessing. 5xx keeps its existing exponential-backoff retry (≤2). A malformed (not
+  schema-invalid) response gets exactly one cheap repair attempt, capped at 300 completion tokens
+  (`AiGenerationSupport.completeAndValidate`) — a genuine schema violation is never retried, since
+  it would just reproduce it, the same logic `finish_reason=length` already followed.
+- **Redis-backed single-flight** (`SingleFlightLock`, jd-service) coalesces concurrent identical
+  optimize requests for the same JD version into one computation — a double-click or a second tab
+  no longer races two full pipelines against the same per-minute budget. Best-effort: jd-service
+  has carried the `spring-boot-starter-data-redis` dependency unused since ADR-002; Redis is wired
+  (`${REDIS_HOST}`/`${REDIS_PORT}`) but, per this repo's existing `nodocker` local-dev convention,
+  is not always running — if it is unreachable, the lock degrades to no coalescing (every caller
+  just computes independently) rather than failing the request, logged as a warning.
+- **Adding a skill from the Skill Gap screen is a deterministic patch, not a Groq call.**
+  `JdOptimizationService.patchWithLatestEvidence` re-runs `EvidenceMatcher` against the caller's
+  now-current evidence and promotes any requirement that was a gap but now has a lexical candidate
+  into a `PARTIAL` match citing it — conservatively; only a real adjudication call can justify
+  `STRONG`. Every previously-established match is carried forward unchanged. The result is marked
+  `optimisation.derived=true`/`stale=true`; the frontend (`GenerationSkillGapPage.tsx`) shows a
+  "Regenerate full check" action that still calls `optimizeForJd(id, refresh=true)` — a real,
+  fully-adjudicated call — for a user who wants one. Previously, every "add a skill" click spent a
+  full `refresh=true` optimize, i.e. another complete adjudication call.
+- **No change**: JD analysis's and adjudication's fundamental purpose, the anti-fabrication
+  guarantee (every candidate-facing value is still a verified `evidenceId`, stripped if unknown —
+  `stripUnknownIds` in both `ai-service` classes, unchanged in spirit), profile/evidence CRUD,
+  output generation for Resume/Email, authentication, the dashboard, or the database schema beyond
+  the two new keys inside `JdOptimization.optimisation`'s existing `Map<String,Object>` (no new
+  Mongo field, no migration).
+- **Explicitly rejected**: decomposing the old single call into four separate LLM calls (one each
+  for keywords, matching, missing requirements, emphasis) — that would have multiplied the
+  dominant cost (evidence + context) by four while two of the four "prompts" were never genuine
+  judgement calls to begin with. Raising `max_completion_tokens` back up to give truncation more
+  headroom — that makes TPM admission strictly worse, the opposite of the fix. Retrying a 429
+  blindly — a "too large" 429 cannot succeed by retrying, and a temporary one is only worth one
+  delayed retry, not several.
+- **Tests**: `GroqClientTest` (ai-service) exercises real retry/rate-limit behaviour against a
+  local `HttpServer`, not a mocked `WebClient` — a too-large 429 (1 request, never retried), a
+  temporary 429 honouring `retry-after` (succeeds on the 2nd attempt), a 5xx exhausting retries (3
+  attempts), a truncated response (1 request, never retried). `EvidenceMatcherTest` and
+  `OptimizationMergeTest` (jd-service, new) cover top-K selection, the anchor set, zero-candidate
+  detection, global caps, keyword classification, missing-requirement set difference and emphasis
+  ranking. `SingleFlightLockTest` (new) covers the lock-acquired, lost-the-race, gave-up-waiting
+  and Redis-unreachable paths. `JdOptimizationServiceTest` (jd-service) asserts the call-count
+  budget directly: at most one adjudication call on the cold path, zero when every requirement is
+  a zero-candidate gap, zero on the skill-gap patch path. Full reactor `mvn verify` and frontend
+  `npm run typecheck`/`build` are clean.

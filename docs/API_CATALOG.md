@@ -332,15 +332,26 @@ the cached analysis. Response:
 `{ jobDescriptionId, title, company, seniority, keywords[], requirements[] }`.
 
 **POST** `/api/jd/{id}/optimize` — Bearer. `?refresh=false`. The JD-optimization operation
-(ADR-033) that replaced resume/cover-letter generation. No confirm gate any more (ADR-037); loads
-the JD's cached analysis plus the caller's verified evidence from profile-service, calls
-`ai-service` (`POST /internal/ai/jd-optimization`), and persists the validated result. Returns
-targeting data, never a document. Re-reads an existing result for the same JD version unless
-`refresh=true` (use after a profile edit or a skill-gap add on the frontend's Skill Gap step).
-`422 VALIDATION_ERROR` when the JD has no requirements or the profile has no evidence;
-`502 AI_GENERATION_FAILED` / `429 RATE_LIMIT_EXCEEDED` on provider failure. Response:
-`{ id, jobDescriptionId, optimisation{ targetRole, targetCompany, keywords[], requirementMatches[],
-missingRequirements[], emphasis[] }, citedEvidenceIds[], createdAt }`.
+(ADR-033, restructured by ADR-038) that replaced resume/cover-letter generation. No confirm gate
+any more (ADR-037); loads the JD's cached analysis, deterministically pre-filters the caller's
+verified evidence down to a handful of candidates per requirement (`EvidenceMatcher`), calls
+`ai-service` for adjudication only (`POST /internal/ai/jd-optimization` — skipped entirely, zero
+Groq calls, if every requirement turns out to have no evidence candidate at all), deterministically
+assembles keywords/missing-requirements/emphasis (`OptimizationMerge`), and persists the result.
+Returns targeting data, never a document. Coalesced via a Redis-backed single-flight lock, so a
+double-click doesn't spend two AI calls. Re-reads an existing result for the same JD version
+unless `refresh=true` (a real re-adjudication; use after a profile edit or an explicit
+"Regenerate full check"). `422 VALIDATION_ERROR` when the JD has no requirements or the profile
+has no evidence; `502 AI_GENERATION_FAILED` / `429 RATE_LIMIT_EXCEEDED` on provider failure.
+Response: `{ id, jobDescriptionId, optimisation{ targetRole, targetCompany, keywords[],
+requirementMatches[], missingRequirements[], emphasis[], derived, stale }, citedEvidenceIds[],
+createdAt }`.
+
+**POST** `/api/jd/{id}/optimize/patch` — Bearer (ADR-038). Adding one skill from the Skill Gap
+screen: re-fetches the caller's current evidence and deterministically promotes any requirement
+that was a gap but now has a lexical candidate — **zero Groq calls**. Requires an existing
+optimization (`422 VALIDATION_ERROR` if none yet — run `/optimize` first). Response marks
+`optimisation.derived`/`stale` true; same shape as `/optimize` otherwise.
 
 **GET** `/api/jd/{id}/optimization` — Bearer. The current optimization for this JD, `404` when
 none has been computed. Same response shape.

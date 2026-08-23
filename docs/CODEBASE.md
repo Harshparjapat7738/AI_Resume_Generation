@@ -388,25 +388,36 @@ JD analysis        No confirm gate any more (ADR-037 removed it — the frontend
                    version thereafter.
 ```
 
-### JD optimization **— implemented (ADR-033), the product's primary flow**
+### JD optimization **— implemented (ADR-033, restructured by ADR-038), the product's primary flow**
 
 ```text
 POST /api/jd/{id}/optimize            (gateway → jd-service)
-  ├── JdService.analyse                 currentVersion + cached analysis (ownership enforced here)
+  ├── JdService.analyse                 currentVersion + cached analysis (ownership enforced here;
+  │                                      one Groq call the first time a JD version is analysed)
   ├── profile-service GET /api/profile/evidence     verified evidence inventory
-  ├── ai-service POST /internal/ai/jd-optimization  one Groq call
-  │     ├── JSON-Schema validation
-  │     └── stripUnknownIds — any requirement/evidence id not in the request is removed;
-  │         a match left with no evidence is downgraded to NONE
+  ├── EvidenceMatcher.filter             deterministic, no Groq — lexical top-3-5-per-requirement
+  │                                      + recency/certification anchor set, ≤40 units/~6,000 chars;
+  │                                      a requirement with zero candidates skips Groq entirely
+  ├── ai-service POST /internal/ai/jd-optimization  adjudication only — {matches:[{requirementId,
+  │     ├── JSON-Schema validation         evidenceIds, confidence, matchKind}]}, skipped if every
+  │     └── stripUnknownIds                requirement was zero-candidate
+  ├── OptimizationMerge.merge            deterministic, no Groq — keywords/missingRequirements/
+  │                                      emphasis/targetRole/targetCompany assembled here, not asked
+  │                                      of the model (ADR-038)
   └── persist JdOptimization (jd_optimizations, one per jdVersionId)
 
+POST /api/jd/{id}/optimize/patch      adding a skill: EvidenceMatcher + OptimizationMerge only,
+                                       zero Groq calls, result marked derived/stale (ADR-038)
 GET  /api/jd/{id}/optimization        the persisted result, no AI call
 POST /api/assessment/{jobDescriptionId}   deterministic JD-fit score over that optimization
 ```
 
 Re-reads an existing result for the same JD version rather than spending another AI request;
-`?refresh=true` recomputes, which is what a profile edit warrants. No document is produced at
-any point — the frontend exports JSON or a ready-to-paste external prompt.
+`?refresh=true` recomputes, which is what a profile edit (or an explicit "Regenerate full check")
+warrants. Coalesced by a Redis-backed single-flight lock (best-effort — degrades to no coalescing
+if Redis is unreachable). Cold path (uncached analysis + a fresh optimization): at most 2 Groq
+calls. Warm path: 1. Skill-gap addition: 0. No document is produced at any point — the frontend
+exports JSON or a ready-to-paste external prompt.
 
 ### JD-fit assessment **— implemented, scored from the optimization (ADR-033)**
 
