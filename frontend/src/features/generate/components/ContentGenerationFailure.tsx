@@ -17,6 +17,20 @@ interface Diagnosis {
   retryable: boolean;
 }
 
+/** The API's own error envelope, verbatim — shown alongside the friendly copy so the exact
+ *  code/message/correlationId the server returned is always visible, not just inferred from it. */
+function rawDetails(error: unknown): { code: string; status: number; message: string; correlationId?: string | undefined } | null {
+  if (!(error instanceof ApiError)) {
+    return null;
+  }
+  return {
+    code: error.body.code,
+    status: error.status,
+    message: error.body.message,
+    correlationId: error.body.correlationId,
+  };
+}
+
 function diagnose(error: unknown, outputLabel: string): Diagnosis {
   const code = error instanceof ApiError ? error.body.code : null;
   const message = error instanceof ApiError ? error.body.message : null;
@@ -56,8 +70,12 @@ function diagnose(error: unknown, outputLabel: string): Diagnosis {
 
   if (code === 'AI_GENERATION_FAILED') {
     return {
+      // Show the backend's own message rather than a hand-written override — the backend
+      // already decides what's safe to say (never a stack trace, exception class, or raw
+      // provider body — see CLAUDE.md), so its wording is the most accurate diagnostic text
+      // available without inventing anything.
       stage: 'content',
-      detail: `The AI provider couldn’t complete your ${outputLabel} after a retry. Nothing was saved, so trying again is safe.`,
+      detail: message ?? `The AI provider couldn’t complete your ${outputLabel}.`,
       retryable: true,
     };
   }
@@ -91,6 +109,7 @@ const STAGE_ORDER: Stage[] = ['jd', 'profile', 'content'];
  */
 export function ContentGenerationFailure({ error, outputLabel }: { error: unknown; outputLabel: string }) {
   const { stage, detail, action, retryable } = diagnose(error, outputLabel);
+  const raw = rawDetails(error);
   const failedIndex = STAGE_ORDER.indexOf(stage);
 
   const stageLabels: Record<Stage, string> = {
@@ -133,6 +152,34 @@ export function ContentGenerationFailure({ error, outputLabel }: { error: unknow
         >
           {action.label} →
         </Link>
+      )}
+
+      {raw && (
+        <details className="mt-4 text-xs text-ink-faint">
+          <summary className="cursor-pointer select-none hover:text-ink-muted">
+            Error details
+          </summary>
+          <dl className="mt-2 space-y-1 rounded-lg border border-border bg-surface p-3 font-mono">
+            <div className="flex gap-2">
+              <dt className="shrink-0 text-ink-faint">status</dt>
+              <dd className="break-all text-ink-muted">{raw.status}</dd>
+            </div>
+            <div className="flex gap-2">
+              <dt className="shrink-0 text-ink-faint">code</dt>
+              <dd className="break-all text-ink-muted">{raw.code}</dd>
+            </div>
+            <div className="flex gap-2">
+              <dt className="shrink-0 text-ink-faint">message</dt>
+              <dd className="break-all text-ink-muted">{raw.message}</dd>
+            </div>
+            {raw.correlationId && (
+              <div className="flex gap-2">
+                <dt className="shrink-0 text-ink-faint">correlationId</dt>
+                <dd className="break-all text-ink-muted">{raw.correlationId}</dd>
+              </div>
+            )}
+          </dl>
+        </details>
       )}
     </div>
   );
