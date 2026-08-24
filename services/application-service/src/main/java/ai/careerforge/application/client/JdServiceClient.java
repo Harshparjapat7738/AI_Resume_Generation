@@ -2,7 +2,6 @@ package ai.careerforge.application.client;
 
 import ai.careerforge.application.client.ClientDtos.JdAnalysisDto;
 import ai.careerforge.application.client.ClientDtos.JdOptimizationDto;
-import ai.careerforge.application.client.ClientDtos.JobDescriptionDto;
 import org.springframework.cloud.openfeign.FeignClient;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -10,12 +9,13 @@ import org.springframework.web.bind.annotation.PathVariable;
 @FeignClient(name = "jd-service", configuration = FeignHeaderForwardingConfig.class)
 public interface JdServiceClient {
 
-    @GetMapping("/api/jd/{id}")
-    JobDescriptionDto get(@PathVariable("id") String id);
-
-    /** Requirements from a CONFIRMED job description — used to drive cover-letter evidence
-     *  selection the same way resume-service uses it (mirrors {@code resume-service}'s
-     *  {@code JdServiceClient}). {@code 409} if the JD isn't confirmed yet. */
+    /** The JD's structured analysis (title, company, requirements, keywords) — computed now if
+     *  this JD version has never been analysed yet, or read back from cache otherwise (ADR-037:
+     *  no confirm gate blocks this any more). Used both to drive cover-letter evidence selection
+     *  and, in {@code ApplicationService#create}, to guarantee {@code title}/{@code company} are
+     *  populated before an {@link ai.careerforge.application.domain.Application} is created from
+     *  them — those fields only exist on the raw JD document as a side effect of analysis having
+     *  run at least once. */
     @GetMapping("/api/jd/{id}/analysis")
     JdAnalysisDto getAnalysis(@PathVariable("id") String id);
 

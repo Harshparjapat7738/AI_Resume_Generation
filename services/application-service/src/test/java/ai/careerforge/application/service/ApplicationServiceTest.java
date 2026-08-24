@@ -10,7 +10,7 @@ import static org.mockito.Mockito.when;
 
 import ai.careerforge.application.client.AssessmentServiceClient;
 import ai.careerforge.application.client.ClientDtos.AssessmentDto;
-import ai.careerforge.application.client.ClientDtos.JobDescriptionDto;
+import ai.careerforge.application.client.ClientDtos.JdAnalysisDto;
 import ai.careerforge.application.client.ClientDtos.ResumeVersionDto;
 import ai.careerforge.application.client.ClientDtos.TemplateDto;
 import ai.careerforge.application.client.JdServiceClient;
@@ -64,7 +64,8 @@ class ApplicationServiceTest {
         // Mongo would normally assign this; the repository mock echoes back what it's given.
         when(applications.save(any(Application.class))).thenAnswer(inv -> inv.getArgument(0));
 
-        when(jdServiceClient.get(JD_ID)).thenReturn(new JobDescriptionDto(JD_ID, "CONFIRMED", "Backend Engineer", "Acme"));
+        when(jdServiceClient.getAnalysis(JD_ID))
+                .thenReturn(new JdAnalysisDto(JD_ID, "Backend Engineer", "Acme", "Senior", java.util.List.of(), java.util.List.of()));
     }
 
     @Nested
@@ -127,12 +128,24 @@ class ApplicationServiceTest {
 
         @Test
         void jobDescriptionNotOwnedByCallerIsReportedAsNotFound() {
-            when(jdServiceClient.get(JD_ID)).thenThrow(notFound());
+            when(jdServiceClient.getAnalysis(JD_ID)).thenThrow(notFound());
 
             assertThatThrownBy(() -> service.create(USER_ID, JD_ID, GenerationType.RESUME_ONLY, null, null))
                     .isInstanceOf(ApiException.class)
                     .extracting(ex -> ((ApiException) ex).code())
                     .isEqualTo(ErrorCode.RESOURCE_NOT_FOUND);
+        }
+
+        @Test
+        @DisplayName("analysing an uncached JD for the first time (e.g. after skipping the Skill "
+                + "Gap step) can hit a Groq rate limit — reported as such, not as an outage")
+        void jdAnalysisRateLimitedDuringCreationIsReportedAsRateLimit() {
+            when(jdServiceClient.getAnalysis(JD_ID)).thenThrow(tooManyRequests());
+
+            assertThatThrownBy(() -> service.create(USER_ID, JD_ID, GenerationType.EMAIL_ONLY, null, null))
+                    .isInstanceOf(ApiException.class)
+                    .extracting(ex -> ((ApiException) ex).code())
+                    .isEqualTo(ErrorCode.RATE_LIMIT_EXCEEDED);
         }
 
         @Test
@@ -275,5 +288,10 @@ class ApplicationServiceTest {
     private static FeignException.NotFound notFound() {
         Request request = Request.create(HttpMethod.GET, "/x", java.util.Map.of(), null, StandardCharsets.UTF_8, null);
         return new FeignException.NotFound("not found", request, null, null);
+    }
+
+    private static FeignException.TooManyRequests tooManyRequests() {
+        Request request = Request.create(HttpMethod.GET, "/x", java.util.Map.of(), null, StandardCharsets.UTF_8, null);
+        return new FeignException.TooManyRequests("rate limited", request, null, null);
     }
 }

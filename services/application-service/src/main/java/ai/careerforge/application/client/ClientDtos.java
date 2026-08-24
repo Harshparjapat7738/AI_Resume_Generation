@@ -21,11 +21,6 @@ public final class ClientDtos {
 
     // ---- jd-service -----------------------------------------------------------
 
-    /** Only the fields application-service actually reads from {@code GET /api/jd/{id}}. */
-    @JsonIgnoreProperties(ignoreUnknown = true)
-    public record JobDescriptionDto(String id, String status, String title, String company) {
-    }
-
     /** Mirrors jd-service's own {@code Requirement}/{@code JdAnalysis} DTOs —
      *  used to drive cover-letter evidence selection the same way resume generation does. */
     @JsonIgnoreProperties(ignoreUnknown = true)

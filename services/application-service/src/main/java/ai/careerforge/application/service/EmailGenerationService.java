@@ -126,11 +126,20 @@ public class EmailGenerationService {
         }
     }
 
+    /**
+     * Guards against the one case {@code ApplicationService#create} cannot fully rule out: a job
+     * description whose text genuinely never states a role name anywhere (ADR-037/038 —
+     * {@code jd-analysis} legitimately returns {@code jobTitle: null} rather than inventing one
+     * when the posting doesn't say). Application creation itself now guarantees analysis has run
+     * (no confirm gate to skip any more), so reaching this with a blank title means the posting
+     * itself was ambiguous, not that a step was missed.
+     */
     private void requireJobTitle(Application application) {
         if (!hasText(application.jobTitle())) {
             throw new ApiException(ErrorCode.VALIDATION_ERROR,
-                    "This job description doesn't have a confirmed title yet. Confirm and "
-                            + "analyze the job description before generating an email.");
+                    "This job description doesn't state a job title, so there's nothing to "
+                            + "address the email to. Edit the job description to include the role "
+                            + "title, then try again.");
         }
     }
 

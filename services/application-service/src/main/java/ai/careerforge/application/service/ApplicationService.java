@@ -1,7 +1,7 @@
 package ai.careerforge.application.service;
 
 import ai.careerforge.application.client.AssessmentServiceClient;
-import ai.careerforge.application.client.ClientDtos.JobDescriptionDto;
+import ai.careerforge.application.client.ClientDtos.JdAnalysisDto;
 import ai.careerforge.application.client.ClientDtos.ResumeVersionDto;
 import ai.careerforge.application.client.JdServiceClient;
 import ai.careerforge.application.client.ResumeServiceClient;
@@ -70,7 +70,7 @@ public class ApplicationService {
      *  supplied by the caller. */
     public Application create(String userId, String jobDescriptionId, GenerationType generationType,
                               String templateId, String resumeVersionId) {
-        JobDescriptionDto jd = fetchJobDescription(userId, jobDescriptionId);
+        JdAnalysisDto jd = fetchJdAnalysis(userId, jobDescriptionId);
         if (templateId != null && !templateId.isBlank()) {
             fetchTemplate(userId, templateId);
         }
@@ -174,11 +174,29 @@ public class ApplicationService {
         return history.findByApplicationIdAndUserIdOrderByChangedAtDesc(id, userId);
     }
 
-    private JobDescriptionDto fetchJobDescription(String userId, String jobDescriptionId) {
+    /**
+     * Fetches (triggering, if this JD version has never been analysed yet — ADR-037: no confirm
+     * gate blocks this) the JD's structured analysis, rather than the raw {@code JobDescription}
+     * document's own denormalised {@code title}/{@code company}. Those fields are only ever
+     * populated as a side effect of analysis having actually run once; a JD reaching this call
+     * without that — most commonly a user skipping the Skill Gap step before it finished, since
+     * that step is what normally triggers analysis first — would otherwise silently create an
+     * {@link Application} with a null job title, surfacing much later and far less clearly as
+     * {@code EmailGenerationService}/resume rendering refusing to proceed. Calling analysis here
+     * closes that gap at the one point it can be closed cheaply, before anything is created.
+     */
+    private JdAnalysisDto fetchJdAnalysis(String userId, String jobDescriptionId) {
         try {
-            return jdServiceClient.get(jobDescriptionId);
+            return jdServiceClient.getAnalysis(jobDescriptionId);
         } catch (FeignException.NotFound ex) {
             throw ApiException.notOwned();
+        } catch (FeignException.TooManyRequests ex) {
+            // Same mapping jd-service's own optimise() uses for this — a quota problem, not an
+            // outage: worth telling the caller to wait, not that something is broken.
+            throw new ApiException(ErrorCode.RATE_LIMIT_EXCEEDED,
+                    "The AI provider's rate limit was reached. Please wait a minute and retry.");
+        } catch (FeignException.BadGateway ex) {
+            throw new ApiException(ErrorCode.AI_GENERATION_FAILED);
         } catch (FeignException ex) {
             log.warn("jd-service call failed for jobDescriptionId={}: {}", jobDescriptionId, ex.getMessage());
             throw new ApiException(ErrorCode.UPSTREAM_UNAVAILABLE);
