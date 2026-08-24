@@ -208,34 +208,54 @@ jd-service
 
 ```text
 ai-service
-├── Purpose        The single boundary to Groq — the only process that holds GROQ_API_KEY.
-│                  Groq is the only AI provider; Gemini was removed entirely (ADR-033)
+├── Purpose        The single boundary to Groq/Gemini — the only process holding either
+│                  GROQ_API_KEY or GEMINI_API_KEY. Groq is the primary provider everywhere;
+│                  Gemini (ADR-039, reintroduced after ADR-033 removed it) is the fallback
+│                  for exactly two operations, never called when Groq succeeds
 ├── Port           8085 (internal only — ADR-012)
 ├── Responsibilities  versioned prompts; JD wrapped as untrusted data; JSON-schema-
 │                  constrained output; schema validation; grounding validation (email);
-│                  hallucinated-id stripping (optimization); token/latency metrics
-├── Database       none — Redis for idempotency keys and cached responses
+│                  hallucinated-id stripping (optimization); token/latency metrics;
+│                  Groq-vs-Gemini routing (ADR-039, one place, AiProviderRouter)
+├── Database       none — Redis for the JD-optimization Groq cooldown (ADR-039, best-effort)
 ├── APIs           GET  /internal/ai/status
-│                  POST /internal/ai/jd-analysis
+│                  POST /internal/ai/jd-analysis           (Groq, Gemini fallback — ADR-039)
 │                  POST /internal/ai/evidence-selection
-│                  POST /internal/ai/jd-optimization      (ADR-033 — the product's main output)
+│                  POST /internal/ai/jd-optimization       (ADR-033/038 — adjudication only;
+│                                                           Groq, Gemini fallback — ADR-039)
 │                  POST /internal/ai/email-content
-├── External       Groq API only
-└── Key classes    config/GroqProperties      env-bound; masks the key for diagnostics
-                   config/GroqClientConfig    the one WebClient, key attached once
+├── External       Groq API (primary, all operations); Gemini API (fallback, JD analysis +
+│                  JD-optimization adjudication only — ADR-039)
+└── Key classes    config/GroqProperties, GeminiProperties   env-bound; mask the key for
+                                                              diagnostics; Gemini's is optional
+                   config/GroqClientConfig, GeminiClientConfig   one WebClient bean each,
+                                                                 distinct base URL/auth scheme
+                   config/AiFallbackProperties   which operations may fall back (ADR-039) —
+                                                  the one config AiProviderRouter reads
                    client/AiChatClient        provider-agnostic contract (ADR-024) — system
                                               prompt/user content in, JSON content/model/
-                                              token-count out
-                   client/GroqClient          the sole implementation; JSON mode, backoff,
-                                              metrics, no body logging. Distinguishes a 429
-                                              (quota) from a 5xx (outage) so a rate limit is
-                                              never reported as an outage
+                                              provider/token-count out
+                   client/AiProviderRouter    the sole implementation (ADR-039) — Groq first,
+                                              Gemini fallback for allow-listed operations on a
+                                              fallback-eligible failure only; the one place any
+                                              provider decision is made
+                   client/GroqClient          primary provider; JSON mode, backoff, metrics,
+                                              no body logging. Distinguishes a 429 (quota) from
+                                              a 5xx (outage); no longer implements AiChatClient
+                                              directly (ADR-039 — the router does)
+                   client/GeminiClient        fallback provider (ADR-039) — structured JSON
+                                              output via responseSchema, single-shot (no
+                                              internal retry), same no-body-logging discipline
+                   client/GroqCooldown        minimal Redis-backed cooldown (ADR-039) — skips
+                                              a known-bad Groq call for ~45s after a rate limit
                    prompt/PromptRegistry      classpath prompts/<name>/v<N>.txt
                    prompt/UntrustedContent    sanitise + fence third-party text
-                   schema/SchemaValidator     networknt, per-operation JSON Schema
+                   schema/SchemaValidator     networknt, per-operation JSON Schema — the same
+                                              schema file validates Groq's and Gemini's output
                    grounding/GroundingValidator   the anti-fabrication gate for email prose
                    service/JdAnalysisService, EvidenceSelectionService,
                            JdOptimizationService, EmailContentService, AiGenerationSupport
+                                              — unchanged by ADR-039; no provider branching
                    api/AiController
 ```
 

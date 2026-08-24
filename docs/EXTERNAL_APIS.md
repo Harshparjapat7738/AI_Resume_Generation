@@ -96,9 +96,11 @@ Redis beyond the lifetime of the job that needs them.
 ## Groq
 
 **Purpose**
-The only LLM provider ([ADR-033](ARCHITECTURE_DECISIONS.md#adr-033)) — JD analysis, evidence
+The primary LLM provider ([ADR-033](ARCHITECTURE_DECISIONS.md#adr-033)) — JD analysis, evidence
 selection, JD optimization and email content generation all depend on Groq being reachable.
-Gemini was removed entirely.
+Since [ADR-039](ARCHITECTURE_DECISIONS.md#adr-039), JD analysis and JD-optimization adjudication
+fall back to Gemini (see below) when Groq fails in a way another provider could plausibly
+succeed at; evidence selection and email content have no fallback and behave exactly as before.
 
 **Environment variables**
 
@@ -147,6 +149,82 @@ that vary by tier. `ai-service` therefore:
 - System prompts are never returned to a client and never logged.
 - Request and response bodies are not persisted — only token counts, latency, model ID and
   prompt version.
+
+---
+
+## Gemini
+
+**Purpose**
+The fallback provider for exactly two operations ([ADR-039](ARCHITECTURE_DECISIONS.md#adr-039)):
+JD analysis and JD-optimization adjudication. `ai-service`'s `AiProviderRouter` tries Groq
+first, always; Gemini is only ever called when Groq fails in a way another provider could
+plausibly succeed at (a temporary rate limit, a timeout, Groq unavailable), for one of those two
+operations, and Gemini is actually configured. Groq succeeding never calls Gemini. Evidence
+selection and email content have no fallback at all.
+
+**Environment variables**
+
+```env
+GEMINI_ENABLED=true
+GEMINI_API_KEY=
+GEMINI_BASE_URL=https://generativelanguage.googleapis.com
+GEMINI_MODEL=gemini-3.6-flash
+GEMINI_TIMEOUT_SECONDS=60
+GEMINI_MAX_OUTPUT_TOKENS=1200
+AI_FALLBACK_OPERATIONS=jd-analysis,jd-optimization
+```
+
+**Used by** `ai-service` **only** — same isolation as Groq (ADR-012): no other service may
+declare `GEMINI_API_KEY`, and `ai-service` still has no gateway route.
+
+**Required** No. Entirely optional: leave `GEMINI_API_KEY` blank, or set
+`GEMINI_ENABLED=false`, and `ai-service` starts normally with Groq-only behaviour — a missing
+key is checked at first fallback *attempt*, not at startup (unlike `GroqProperties`, which
+fails fast).
+
+**Setup**
+
+1. Create/select a project in [Google AI Studio](https://aistudio.google.com/) or Google Cloud.
+2. Generate an API key for the Gemini API.
+3. Put it in `.env` as `GEMINI_API_KEY`.
+4. Confirm `GEMINI_MODEL` is a current, stable model that supports structured JSON output
+   (`responseMimeType`/`responseSchema`) — Google renames/deprecates models on its own
+   schedule, same caution as Groq's `GROQ_MODEL`. **Live-verified (ADR-039):** the default,
+   `gemini-3.6-flash`, reasons by default, and that reasoning is billed against the same
+   `maxOutputTokens` as the visible answer — an unconfigured call spent ~290 hidden tokens
+   before writing 5 visible ones, and the model rejects `thinkingBudget:0` outright. `GeminiClient`
+   sends `thinkingConfig:{thinkingLevel:"LOW"}` on every request, which brought that same call's
+   hidden-token spend to effectively zero without raising the output budget. If `GEMINI_MODEL` is
+   ever changed, re-verify this — a model without a "thinking level" option may not need or
+   accept the same field, and one with a different reasoning default could reintroduce the
+   original truncation risk.
+
+**Rate limits**
+Gemini has its own RPM/TPM/RPD limits, enforced per Google Cloud project — creating additional
+API keys does **not** multiply the quota. `ai-service` therefore:
+
+- never retries a Gemini call internally (it is already the fallback path; retrying it would
+  spend more of Gemini's own limited quota for a call whose only remaining escalation is a
+  controlled failure anyway);
+- classifies a 429 the same way Groq's is (a "this request alone exceeds the limit" wording is
+  never retried/escalated further; a temporary one is reported as such);
+- marks a short (45s) cooldown after a Groq rate-limit failure (`GroqCooldown`, Redis-backed,
+  best-effort) so a burst of requests doesn't re-attempt an already-known-bad Groq call before
+  falling back — reducing load on both providers, not just Groq;
+- records token usage and rate-limit-relevant response headers the same way Groq's are.
+
+**Security**
+
+- Same rules as Groq: never exposed to React, exists in exactly one process (`ai-service`),
+  revoke-then-rotate if leaked.
+- The API key is sent as the `x-goog-api-key` request header, never as a URL query parameter —
+  it cannot appear in access logs that record request paths.
+- Every JD/evidence payload reaching Gemini has already been fenced/sanitised and deterministically
+  filtered exactly as Groq's is (ADR-038) — Gemini never sees the caller's full evidence
+  inventory, and structured output (`responseSchema`) constrains it to the same shape Groq's
+  output is validated against.
+- Request and response bodies are not logged — only token counts, latency, model ID, finish
+  reason and status.
 
 ---
 

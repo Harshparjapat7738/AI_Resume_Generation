@@ -45,6 +45,7 @@ implementation reality required a choice the blueprint did not make.
 | [ADR-036](#adr-036) | Resume and Cover Letter generation reintroduced across three separated responsibilities: `ai-service` generates grounded content fragments only, `application-service` deterministically assembles the versioned `ResumeDocumentModel`/`CoverLetterDocumentModel` and owns orchestration/persistence, and a new, narrow `render-service` renders that model — and only that model — into a PDF via Thymeleaf + Open HTML to PDF and verifies the artifact. `document-service` is not reintroduced, ADR-034 "My Templates" is untouched, no ATS/outcome score is produced anywhere in the pipeline (deterministic coverage facts only), ATS structural scoring stays deferred to a follow-up ADR | Accepted |
 | [ADR-037](#adr-037) | The JD Confirm step and the standalone Review/"Generate application" page are removed from the generation flow; Skill Gap becomes its own step, positioned between JD entry and Output Type. New flow: JD → Skill Gap → Output Type → Generate/Processing → Result. `jd-service`'s confirm gate (`JdService.confirm`, the `POST /{id}/confirm` endpoint, the `JD_NOT_CONFIRMED` check in `analyse`/`optimise`) is deleted; analysis and optimization now always read `currentVersion` directly. No new AI workflow, no change to JD analysis/skill-gap/profile/evidence/output-generation logic — the real Groq JD-optimization call simply moves to run automatically on the Skill Gap step instead of behind a separate confirm click | Accepted |
 | [ADR-038](#adr-038) | Groq rate-limit redesign for JD optimization: the old single "jd-optimization" call is replaced with an adjudication-only call (matches/confidence/matchKind, no free text) fed only requirements plus deterministically pre-filtered evidence (jd-service's new `EvidenceMatcher`); keywords, missingRequirements, emphasis, targetRole/targetCompany are now computed deterministically (`OptimizationMerge`) instead of asked of the model. Per-operation `max_completion_tokens` replaces the old blanket 4,096 (analysis 1,200, adjudication 1,000). `GroqClient` now captures rate-limit headers, distinguishes a "too large" 429 (never retried) from a temporary one (one retry honouring `retry-after`), and never retries a truncated response. Redis-backed single-flight coalesces concurrent identical requests; adding one skill from the Skill Gap screen patches the cached result deterministically (`derived`/`stale` flags) instead of re-running Groq. Cold path: ≤2 Groq calls (analysis + adjudication, or 1 if every requirement is a zero-candidate gap). Warm path: 1. Skill-gap addition: 0. The persisted/frontend-facing `optimisation` JSON shape is unchanged — no frontend contract change beyond the additive `derived`/`stale` fields | Accepted |
+| [ADR-039](#adr-039) | Gemini reintroduced as the fallback provider (never primary) for exactly two operations — JD analysis and JD-optimization adjudication — when Groq fails a fallback-eligible way (temporary rate limit, timeout, 5xx; never for a deterministic 4xx or an oversized-per-our-own-ceiling request). New `AiProviderRouter` is the sole `AiChatClient` implementation; `GroqClient`/`GeminiClient` become plain collaborators it holds, so no business service branches on provider. Same prompt/schema/validation/caching pipeline for both providers — Gemini uses structured JSON output (`responseSchema`) mirroring the canonical schema files, never a converted copy. Same ADR-038 token budgets (1,200/1,000), same deterministic evidence pre-filtering — never the full inventory to either provider. A short Redis-backed Groq cooldown (`GroqCooldown`, best-effort) avoids re-attempting a just-failed Groq call. Deliberately the *opposite* shape from the Gemini-primary/Groq-fallback routing ADR-032/033 removed for a hard "zero Gemini calls" guarantee — this is Groq-primary, Gemini only as a last resort for two operations, motivated by ADR-038's real rate-limit failures, not a reversal of that reasoning | Accepted |
 
 ---
 
@@ -3758,3 +3759,108 @@ fixing the symptom with more retries or a bigger token ceiling.
   budget directly: at most one adjudication call on the cold path, zero when every requirement is
   a zero-candidate gap, zero on the skill-gap patch path. Full reactor `mvn verify` and frontend
   `npm run typecheck`/`build` are clean.
+
+---
+
+# ADR-039
+
+## Decision
+
+Gemini is reintroduced as the **fallback** provider for exactly two operations — JD analysis
+and JD-optimization adjudication — used only when Groq fails in a way another provider could
+plausibly succeed at. This is deliberately the *opposite* shape from the Gemini-primary/
+Groq-fallback routing ADR-025-028/030-031 built and ADR-032/033 removed for a hard, structural
+"zero Gemini calls" guarantee: that removal's whole point was that routing to Gemini on every
+Groq failure, across five operations, in a deployment with a Gemini key configured, was real,
+ongoing Gemini spend for no product requirement. This record does not reopen that reasoning —
+Groq is still primary everywhere, Gemini is called only as a last resort, only for the two
+operations most exposed to ADR-038's real, observed rate-limit failures, and never when Groq
+succeeds.
+
+- **AiProviderRouter** (new) is the sole `@Component` implementing `AiChatClient`. `GroqClient`
+  no longer implements that interface — it and the new `GeminiClient` become plain,
+  concrete-typed collaborators the router holds. Every business service (`JdAnalysisService`,
+  `JdOptimizationService`, `EvidenceSelectionService`, `EmailContentService`) still injects
+  `AiChatClient` exactly as before this record and contains no branching on provider
+  whatsoever — verified by grep across all four: every remaining Groq/Gemini reference in those
+  classes is a Javadoc comment, not code.
+- **Fallback is an explicit allow-list**, not "every operation": `AiFallbackProperties`
+  (`careerforge.ai.fallback.operations`, default `jd-analysis,jd-optimization`) is the one
+  config the router reads. Evidence selection and email content are not in it — their Groq
+  failures behave exactly as they always have.
+- **Fallback-eligible** means the failure is one Gemini could plausibly fix: `GroqException
+  .isRetryable()` (already ADR-038's own "worth retrying" signal — a temporary 429, a timeout, a
+  5xx) — reused as-is, not reinvented. The one nuanced case is Groq's "this single request alone
+  exceeds the limit" 429 (`isTooLarge()`): fallback-eligible only when the payload is within our
+  own configured ceiling (`AiProviderRouter.PREFLIGHT_CEILINGS`, mirroring each operation's
+  ai-service fence caps) — since those fences already truncate content before it ever reaches
+  the router, this is a defensive assertion in the current pipeline (should never fire), not a
+  live gate; if it ever did fire, that would mean our own payload-budget guard was bypassed, an
+  internal bug no provider could route around. Never fallback for a deterministic 4xx we caused,
+  or when Gemini isn't configured (`GeminiProperties#isUsable()`) or the operation isn't
+  allow-listed.
+- **GeminiClient** (new) — a thin `WebClient`-based REST client mirroring `GroqClient`'s shape
+  exactly (no new SDK dependency; the existing pattern already doesn't use one for Groq either).
+  Single-shot, deliberately: no internal retry loop, since retrying the fallback itself would
+  spend more of Gemini's own limited quota (Gemini has its own RPM/TPM/RPD limits, enforced
+  per-project — creating more API keys does not multiply it) for a call whose only remaining
+  escalation is a controlled failure anyway. Uses structured JSON output
+  (`generationConfig.responseMimeType=application/json` + `responseSchema`) — two small,
+  hand-written schema fragments (`schemas/gemini/jd-analysis.gemini-schema.json`,
+  `.../jd-optimization.gemini-schema.json`) mirroring the exact field names/types/enums of the
+  canonical `schemas/jd-analysis.schema.json`/`jd-optimization.schema.json` Groq's output is
+  validated against — never "ask nicely for JSON in the prompt." The response still goes through
+  the identical `SchemaValidator`/`AiGenerationSupport.completeAndValidate` pipeline afterward,
+  repair-attempt included; the structured-output hint reduces how often that has anything to
+  reject, it does not replace it. The API key is sent as the `x-goog-api-key` header, never a
+  query parameter.
+- **Same token budgets as ADR-038, not increased**: 1,200 (analysis) / 1,000 (adjudication),
+  honoured by whichever provider ends up serving the call — `AiChatClient.AiChatResult` gained a
+  `provider` field (`AiProvider.GROQ`/`GEMINI`) so `AiResponses.Provenance` can record
+  `generatedBy`, telemetry only, nothing downstream branches on it.
+- **Same evidence pre-filtering as ADR-038** — `EvidenceMatcher`'s deterministic top-K-per-
+  requirement selection runs once, upstream of the provider choice entirely; neither Groq nor
+  Gemini ever sees the full inventory.
+- **Same cache key as ADR-038, deliberately not forked by provider**: `JdOptimizationRepository
+  .findByJdVersionId`/`JdAnalysisRepository.findByJdVersionId` persist whatever `ai-service`
+  returned, regardless of which provider produced it — jd-service has no knowledge Gemini exists
+  at all, so a Gemini-produced result is cached and reused on the next identical request exactly
+  like a Groq-produced one, with zero jd-service changes required.
+- **Minimal Groq cooldown** (`GroqCooldown`, new, Redis-backed, best-effort — degrades to "always
+  probe Groq" if Redis is unreachable, the same shape as ADR-038's `SingleFlightLock`): after a
+  Groq rate-limit failure, a 45-second flag routes that operation straight to Gemini rather than
+  re-attempting a Groq call already known to be failing — most concretely useful for
+  `AiGenerationSupport`'s own JSON-repair attempt, which calls `AiChatClient.complete` a second
+  time and would otherwise retry the same failing Groq call before falling back again. Not a
+  distributed circuit breaker — a single Redis key per operation, nothing more.
+- **AiProviderException** (new) is the one exception type that ever escapes the router —
+  `provider`, `operation`, a normalised `AiFailureType` (`RATE_LIMIT`, `QUOTA_EXCEEDED`,
+  `TIMEOUT`, `SERVICE_UNAVAILABLE`, `AUTHENTICATION`, `INVALID_REQUEST`, `INVALID_RESPONSE`),
+  `retryable`, `retryAfterSeconds`. `AiController.call()` now catches this instead of
+  `GroqException` — the one call site that changed for this reason.
+- **No change**: JD analysis's/adjudication's prompts, schemas' field semantics, the
+  anti-fabrication `stripUnknownIds` logic, `EvidenceMatcher`/`OptimizationMerge`, jd-service's
+  caching/single-flight/skill-gap-patch logic, the frontend (beyond the additive, unused-so-far
+  `generatedBy` provenance field), or evidence-selection/email-content's own behaviour.
+- **Explicitly rejected**: routing every operation through the fallback (only two are exposed to
+  the rate-limit problem this solves); retrying Gemini internally (wastes its own quota);
+  forking the cache by provider (breaks the "same request, same answer" guarantee and would
+  require jd-service to learn about Gemini's existence for no benefit); a full distributed
+  circuit breaker (the spec this record implements explicitly asked for a minimal cooldown, not
+  a new subsystem).
+- **Tests**: `AiProviderRouterTest` (new) — Groq success never calls Gemini; a temporary 429,
+  timeout, or exhausted-5xx-retries all fall back; a deterministic 4xx never falls back; both
+  providers failing yields one `AiProviderException`; an operation not in the allow-list, or
+  Gemini not configured, never falls back; a "too large" 429 within our own ceiling still falls
+  back, one exceeding it does not; an active cooldown skips Groq entirely; a rate-limited
+  failure marks the cooldown. `GeminiClientTest` (new, local `HttpServer`, mirroring
+  `GroqClientTest`) — success tags the result `AiProvider.GEMINI`; the API key is a header, never
+  a query parameter; a known operation's request carries its `responseSchema`; a "too large" 429
+  vs. a temporary one are classified correctly; a truncated (`MAX_TOKENS`) response is never
+  retried; an unconfigured client fails fast without any HTTP call. `GeminiPropertiesTest` (new)
+  — `isUsable()`/`maskedKey()`. `JdAnalysisServiceTest`/`JdOptimizationServiceTest` (ai-service)
+  extended to assert `Provenance.generatedBy` reflects whichever provider actually served the
+  request. jd-service's existing ADR-038 tests (cached-optimization, cached-analysis, skill-gap
+  patch, filtered-evidence-only) needed no changes — they already assert on `aiServiceClient`
+  call counts, which stay identical regardless of which provider ai-service used internally.
+  Full reactor `mvn verify` and frontend `npm run typecheck`/`build` are clean.

@@ -88,25 +88,33 @@ forwarded as `X-User-Id` — see `FeignHeaderForwardingConfig` in each client).
 | `API_CATALOG.md` | Every endpoint, request/response shape, error code — implemented vs. planned |
 | `API_INTEGRATION.md` | Which frontend file calls which endpoint; session/auth/onboarding redirect logic |
 | `DATABASE.md` | Per-service Mongo collections, indexes, retention |
-| `ARCHITECTURE_DECISIONS.md` | 38 ADRs — every place implementation deviated from the original blueprint, and why. Many are marked "Superseded by ADR-033" (the resume/cover-letter/document decisions); read the index table's Status column before trusting an older one. ADR-037 (Confirm/Review pages removed, Skill Gap is its own step) and ADR-038 (Groq rate-limit redesign — adjudication-only optimization, deterministic evidence filtering) are the most recent |
+| `ARCHITECTURE_DECISIONS.md` | 39 ADRs — every place implementation deviated from the original blueprint, and why. Many are marked "Superseded by ADR-033" (the resume/cover-letter/document decisions); read the index table's Status column before trusting an older one. ADR-038 (Groq rate-limit redesign) and ADR-039 (Gemini reintroduced as fallback for JD analysis/adjudication only) are the most recent |
 | `EXTERNAL_APIS.md` | Groq/Google OAuth/Atlas/Gmail/SMTP setup, scopes, rate limits |
 | `ai-abstraction.md` | The `AiChatClient` contract and why it stayed after Gemini was removed |
 | `IMPLEMENTATION_PLAN.md` | Milestones and what's left |
 
 `infrastructure/config-repo/` — the Spring Cloud Config backend (secret-free `application.yml`, `${ENV_VAR}` refs only). `infrastructure/{grafana,prometheus,otel}/` — observability provisioning. `scripts/*.ps1` — Windows helpers for running the stack without Docker (see below). Root `tests/` currently holds only a README describing planned cross-service suites (`e2e`/`contract`/`ai-eval`/`security`) — the real, working e2e suite lives at `frontend/tests/e2e/` (Playwright, against the real backend, no mocking).
 
-## The one AI provider (ADR-033)
+## AI providers: Groq primary, Gemini fallback for two operations (ADR-033/039)
 
-**Groq is the only AI provider.** Gemini was removed entirely — its last consumer was
-custom-PDF template analysis, which died with document rendering. `GeminiClient`,
-`GeminiProperties`, `GEMINI_API_KEY` and `google-genai` are all gone; don't reintroduce them.
+**Groq is the primary provider for every operation.** Gemini was removed entirely by ADR-033
+(its last consumer then was custom-PDF template analysis) and stayed gone until ADR-039
+reintroduced it — deliberately in the *opposite* shape from what was removed: Groq-primary,
+Gemini-fallback (not Gemini-primary/Groq-fallback), and only for **JD analysis** and
+**JD-optimization adjudication**, the two operations ADR-038 found were actually hitting Groq's
+rate limit in practice. Evidence selection and email content have no fallback — a Groq failure
+there behaves exactly as it always has.
 
 Six Groq operations: **JD analysis**, **evidence selection**, **JD optimization** (the product's
 main output — since ADR-038 an adjudication-only call, not the whole targeting result), **email
 content**, and (ADR-036) **resume content** + **cover-letter content**. Every one injects
-`AiChatClient`, whose sole implementation is `GroqClient`. `AiChatClient#complete` takes an
-optional per-call `maxCompletionTokensOverride` (ADR-038) — JD analysis and adjudication use it
-to reserve far less than the old blanket default; the other operations still use it unset.
+`AiChatClient` — since ADR-039 its sole implementation is `AiProviderRouter`, not `GroqClient`
+directly; `GroqClient` and `GeminiClient` are plain collaborators the router holds, and no
+business service branches on provider. `AiChatClient#complete` takes an optional per-call
+`maxCompletionTokensOverride` (ADR-038) — JD analysis and adjudication use it to reserve far
+less than the old blanket default, honoured by whichever provider ends up serving the call; the
+other operations still use it unset. Gemini is entirely optional: no `GEMINI_API_KEY` (or
+`GEMINI_ENABLED=false`) means `ai-service` starts fine and behaves exactly Groq-only.
 
 **No AI touches document rendering.** Resume/cover-letter generation returned in ADR-036, but the
 document-model contract keeps the boundary exactly where it was: `ai-service` produces and
