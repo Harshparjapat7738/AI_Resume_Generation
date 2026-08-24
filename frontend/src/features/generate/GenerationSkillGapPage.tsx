@@ -78,6 +78,11 @@ function GapChip({
  * optimization this step computes is exactly what output-type selection and generation reuse
  * afterward (no second AI workflow, `optimizeForJd(id, refresh=false)` just re-reads the
  * persisted result if nothing changed since).
+ *
+ * <p>Optional: "Skip this step" is always available — while loading, on failure, or once
+ * results are shown — and just navigates to Output Type without waiting for or requiring this
+ * step's result. Safe to skip: Output Type is pure client-side selection, and the Generate step
+ * computes (or re-reads) the optimization itself if the user later picks the resume path.
  */
 export function GenerationSkillGapPage() {
   const { jdId = '' } = useParams<{ jdId: string }>();
@@ -160,14 +165,30 @@ export function GenerationSkillGapPage() {
           <div className="mx-auto max-w-[1680px]">
             <GenerationProgress activeStep={1} />
 
-            <h1 className="mt-6 text-2xl font-semibold tracking-tight text-ink sm:text-[28px]">
-              Skill gaps for this role
-            </h1>
-            <p className="mt-1.5 max-w-2xl text-sm text-ink-muted">
-              We compared this job description against your verified profile. Anything shown below
-              without a green background isn't backed by your profile yet — click it to add it as
-              a real skill and instantly re-check this role against it.
-            </p>
+            <div className="mt-6 flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <h1 className="text-2xl font-semibold tracking-tight text-ink sm:text-[28px]">
+                  Skill gaps for this role
+                </h1>
+                <p className="mt-1.5 max-w-2xl text-sm text-ink-muted">
+                  We compared this job description against your verified profile. Anything shown
+                  below without a green background isn't backed by your profile yet — click it to
+                  add it as a real skill and instantly re-check this role against it.
+                </p>
+              </div>
+              {/* Identifying gaps is optional — a user who doesn't want to review or close them
+                  can go straight to choosing what to generate. Always available, regardless of
+                  whether the analysis is still running, failed, or already finished, since none
+                  of those states block choosing an output type: Output Type is pure client-side
+                  selection, and Generate re-reads/computes the optimization itself if needed. */}
+              <Button
+                variant="ghost"
+                className="shrink-0"
+                onClick={() => navigate(`/generate/output/${jdId}`)}
+              >
+                Skip this step →
+              </Button>
+            </div>
 
             {loading && !optimization && (
               <div className="mt-10 flex flex-col items-center gap-4 rounded-2xl border border-border bg-surface px-6 py-16 text-center">
