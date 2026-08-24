@@ -35,8 +35,13 @@ Two mechanisms enforce that in code, not just in the prompt, because the two ope
 different things:
 
 - **JD optimization** emits no prose, so there is nothing to validate sentence-by-sentence.
-  `JdOptimizationService.stripUnknownIds` instead removes every requirement or evidence id
-  absent from the request, and downgrades a match left with no surviving evidence to `NONE`.
+  Since ADR-038 the LLM call itself (`ai-service`'s `JdOptimizationService`, now adjudication-only)
+  only ever sees requirements plus evidence `jd-service`'s `EvidenceMatcher` already pre-selected
+  for relevance — `stripUnknownIds` still removes any requirement/evidence id the model invents
+  anyway. `missingRequirements` and `emphasis` are no longer asked of the model at all — jd-service's
+  `OptimizationMerge` computes them deterministically (a missing requirement is a set difference,
+  emphasis is a weighted sort), so there's nothing there to hallucinate in the first place. A match
+  left with no surviving evidence is downgraded to `NONE` rather than allowed to stand.
 - **Email content** is prose, so `GroundingValidator` applies as it always has — see the
   `ai-service` entry in `docs/CODEBASE.md` §2 for exactly what it checks.
 
@@ -64,14 +69,14 @@ forwarded as `X-User-Id` — see `FeignHeaderForwardingConfig` in each client).
 | `platform-common` | — | Shared library, not deployed: error envelope (`ErrorCode`/`ApiError`/`ApiException`/`GlobalExceptionHandler`), `@CallerId` header resolver, correlation-ID filter. No domain models or DTOs live here (ADR-006). |
 | `auth-service` | 8081 | Accounts, BCrypt password hashing, JWT mint/refresh rotation, Google OAuth. Signs the JWT the gateway verifies — the only two places the signing secret exists. |
 | `profile-service` | 8082 | The candidate's verified data: personal info + six evidence-bearing sections (education, experience, skills, projects, certifications, achievements), each item carrying a stable `evidenceId`. **Sole source of truth** — if it's not here, no optimization may assert it. Also owns **"My Templates"** (ADR-034): a `templates` collection of user-uploaded Resume/Cover Letter files (validated, never parsed) backed by the MinIO/S3 bucket `document-service` used to own — upload/list/rename/set-default/delete/download at `/api/profile/templates/**`. |
-| `jd-service` | 8083 | Job description intake (paste text or SSRF-guarded URL fetch — ADR-015), mandatory user confirmation, requirement extraction/analysis, **and JD optimization** — the product's primary output (ADR-033): orchestrates confirmed analysis + profile evidence through ai-service and persists the result (`jd_optimizations`, one per JD version). |
+| `jd-service` | 8083 | Job description intake (paste text or SSRF-guarded URL fetch — ADR-015), requirement extraction/analysis — no confirm/review gate any more (ADR-037: `analyse`/`optimise` always read the JD's `currentVersion` directly) — **and JD optimization**, the product's primary output (ADR-033, restructured by ADR-038): deterministically pre-filters the profile's evidence (`EvidenceMatcher`) down to a handful of lexically-relevant candidates per requirement before it ever reaches `ai-service`, sends at most one adjudication call, deterministically assembles keywords/missing-requirements/emphasis (`OptimizationMerge`), and persists the result (`jd_optimizations`, one per JD version) behind a Redis-backed single-flight lock. Adding one skill from the Skill Gap screen (`POST /{id}/optimize/patch`) patches the cached result deterministically — zero Groq calls. |
 | `render-service` | 8084 | Renders an already-grounded, schema-validated document model into a PDF (ADR-036): Thymeleaf template fill → jsoup/W3CDom strict-XHTML normalisation → Open HTML to PDF (PDFBox). PDF-only — no DOCX, no mail-merge, no custom-template support. Holds no AI credential and never calls `ai-service`; owns its own MinIO/S3 bucket, distinct from `profile-service`'s "My Templates" bucket (ADR-034). |
 | `ai-service` | 8085 | The **only** process holding `GROQ_API_KEY` (ADR-012, internal-only, no gateway route). Six operations: JD analysis, evidence selection, **JD optimization**, email content, and (ADR-036) **resume content** + **cover-letter content** — the two new operations produce a versioned, schema-validated document model that `render-service` renders, never `ai-service` itself. Versioned prompts, JD fenced as untrusted data, JSON-Schema-validated output, `GroundingValidator` (the anti-fabrication gate, now applied to resume/cover-letter content exactly as it already was for email prose). Groq is the only provider — Gemini was removed entirely (ADR-033) and stays removed under ADR-036. |
 | `assessment-service` | 8086 | Deterministic JD-fit/screening-readiness scoring, keyed on the JD optimization (ADR-033). ATS scoring was removed with resume generation. Never calls an LLM. |
 | `application-service` | 8088 | The central `Application` aggregate, **application-email generation** (ADR-017/019), and (ADR-036) **resume/cover-letter generation orchestration** — calls `ai-service` for the document model, then `render-service` for the PDF, and persists `ResumeVersion`/`CoverLetterVersion` scoped to the `Application`. Cover-letter generation, removed by ADR-033, is back under this orchestration. |
 
 `frontend/` — React 19 + TypeScript + Vite + Tailwind 4, feature-folder structure:
-- `src/features/<area>/` — one folder per screen area (`onboarding`, `profile`, `generate`, `results`, `dashboard`, `applications`, `emails`, `analytics`, ...), each with its page(s) and local `components/`.
+- `src/features/<area>/` — one folder per screen area (`onboarding`, `profile`, `generate`, `results`, `dashboard`, `applications`, `emails`, `analytics`, ...), each with its page(s) and local `components/`. The generation flow (`generate/`) is **Job Description → Skill Gap → Output Type → Generate/Processing → Result** (ADR-037) — there is no Confirm JD step and no standalone Review page; `GenerationSkillGapPage` runs the real JD analysis/optimization call automatically and lets a missing skill be added and re-checked in place.
 - `src/services/*Api.ts` — one client module per backend service (`profile-service` has two: `profileApi.ts` for the profile itself and `templateApi.ts` for "My Templates"), all going through the single fetch wrapper `apiClient.ts` (auth header, `credentials: 'include'` for the refresh cookie, `ApiError` on non-2xx). No component calls `fetch` directly.
 - `src/components/ui/` — shared primitives (Button, Card, Select, TextField, ...) reused across features rather than redefined per screen.
 - `src/routes/router.tsx` — the full route table; everything except `/`, `/login`, `/register` sits behind `ProtectedRoute`.
@@ -83,7 +88,7 @@ forwarded as `X-User-Id` — see `FeignHeaderForwardingConfig` in each client).
 | `API_CATALOG.md` | Every endpoint, request/response shape, error code — implemented vs. planned |
 | `API_INTEGRATION.md` | Which frontend file calls which endpoint; session/auth/onboarding redirect logic |
 | `DATABASE.md` | Per-service Mongo collections, indexes, retention |
-| `ARCHITECTURE_DECISIONS.md` | 35 ADRs — every place implementation deviated from the original blueprint, and why. Many are marked "Superseded by ADR-033" (the resume/cover-letter/document decisions); read the index table's Status column before trusting an older one. ADR-034 ("My Templates") and ADR-035 (`notification-service` removed) are the most recent |
+| `ARCHITECTURE_DECISIONS.md` | 38 ADRs — every place implementation deviated from the original blueprint, and why. Many are marked "Superseded by ADR-033" (the resume/cover-letter/document decisions); read the index table's Status column before trusting an older one. ADR-037 (Confirm/Review pages removed, Skill Gap is its own step) and ADR-038 (Groq rate-limit redesign — adjudication-only optimization, deterministic evidence filtering) are the most recent |
 | `EXTERNAL_APIS.md` | Groq/Google OAuth/Atlas/Gmail/SMTP setup, scopes, rate limits |
 | `ai-abstraction.md` | The `AiChatClient` contract and why it stayed after Gemini was removed |
 | `IMPLEMENTATION_PLAN.md` | Milestones and what's left |
@@ -97,8 +102,11 @@ custom-PDF template analysis, which died with document rendering. `GeminiClient`
 `GeminiProperties`, `GEMINI_API_KEY` and `google-genai` are all gone; don't reintroduce them.
 
 Six Groq operations: **JD analysis**, **evidence selection**, **JD optimization** (the product's
-main output), **email content**, and (ADR-036) **resume content** + **cover-letter content**.
-Every one injects `AiChatClient`, whose sole implementation is `GroqClient`.
+main output — since ADR-038 an adjudication-only call, not the whole targeting result), **email
+content**, and (ADR-036) **resume content** + **cover-letter content**. Every one injects
+`AiChatClient`, whose sole implementation is `GroqClient`. `AiChatClient#complete` takes an
+optional per-call `maxCompletionTokensOverride` (ADR-038) — JD analysis and adjudication use it
+to reserve far less than the old blanket default; the other operations still use it unset.
 
 **No AI touches document rendering.** Resume/cover-letter generation returned in ADR-036, but the
 document-model contract keeps the boundary exactly where it was: `ai-service` produces and
@@ -106,11 +114,27 @@ grounds the content; `render-service` turns an already-validated document model 
 never holds `GROQ_API_KEY`, never injects `AiChatClient`, and never calls `ai-service` at all.
 
 **Groq's rate limit is the usual cause of a failed generation**, and it is counter-intuitive:
-Groq reserves your full `max_completion_tokens` (`GROQ_MAX_OUTPUT_TOKENS`, default 4096) against
-the per-minute token budget at admission, *not* what the response actually uses. On an
-8,000 tokens/minute account that allows roughly **one AI call per minute**. Symptom in
-`logs/ai-service.log`: a failure ~7s after a success ("3 instant rejections + 2s + 4s backoff").
-It is not an outage; check `x-ratelimit-remaining-tokens` before assuming one.
+Groq reserves a call's full `max_completion_tokens` against the per-minute token budget at
+admission, *not* what the response actually uses. On an 8,000 tokens/minute account that leaves
+little headroom, especially for two calls back-to-back. It is not an outage; `GroqClient` now
+logs every response's `x-ratelimit-*`/`retry-after` headers (`logs/ai-service.log`,
+`Groq response operation=...`) — check those before assuming one.
+
+**ADR-038 redesigned JD optimization specifically to live inside that budget**, after a live
+failure traced directly to it: JD analysis and JD-optimization adjudication both used to reserve
+the old blanket `GROQ_MAX_OUTPUT_TOKENS` (4096) regardless of actual need, and the optimization
+call used to see the candidate's *entire* evidence inventory. Now: `jd-analysis` reserves 1,200
+completion tokens, adjudication reserves 1,000; jd-service's `EvidenceMatcher` deterministically
+pre-filters evidence to a handful of lexically-relevant candidates per requirement (≤40 units,
+≤~6,000 chars) before anything reaches `ai-service`; a requirement with zero candidates never
+reaches Groq at all. `GroqClient` classifies a 429 before retrying — Groq's "this request alone
+exceeds the limit" wording is never retried at any delay, a temporary one gets exactly one retry
+honouring `retry-after`. A Redis-backed single-flight lock (`SingleFlightLock`, best-effort —
+degrades to no coalescing if Redis is unreachable) coalesces a double-click into one computation.
+Adding a skill from the Skill Gap screen no longer spends a Groq call at all — it patches the
+cached result deterministically. See ADR-038 for the full design and its one known gap: the
+optimization cache key is `jdVersionId` only, so a prompt/model/filter-logic change doesn't
+auto-invalidate an already-cached result (only an explicit `refresh=true` does).
 
 ## Known loose ends
 
@@ -132,12 +156,20 @@ It is not an outage; check `x-ratelimit-remaining-tokens` before assuming one.
 - **ATS structural scoring stays removed even after ADR-036 brought resume/cover-letter generation
   back.** `ats_assessments` is still one of the six dead collections above; reviving ATS scoring is
   explicitly deferred to its own future ADR, not implied by ADR-036.
-- **`frontend/tests/e2e/jd-optimization.spec.ts` has never been run.** It needs the full live
-  stack. Its Kafka-gap assertion depends on Groq classifying an unevidenced requirement as
-  missing; loosen it if the model proves generous.
 - **No frontend unit tests exist.** `npm test` finds no files: vitest is installed but there is
   no `@testing-library/react`, no DOM environment, and no config. Typecheck + build are the
   real gates.
+- **The old Confirm JD step and standalone Review/"Generate application" page are gone (ADR-037),
+  not hidden.** `JdService.confirm`, `POST /{id}/confirm`, `JD_NOT_CONFIRMED`,
+  `GenerationReviewPage.tsx`, `ConfirmAnalysisModal.tsx` no longer exist. `JobDescriptionStatus`'s
+  `CONFIRMED`/`REJECTED` enum values and `JobDescription`'s `confirmedAt`/`confirmedVersion` fields
+  are deliberately still there (unused) so Spring Data doesn't choke deserialising an older
+  persisted Atlas document — don't "clean them up" without re-checking that reasoning first.
+- **The JD-optimization cache key is `jdVersionId` only (ADR-038's one known gap), not a
+  composite of JD/evidence/prompt/model/filter versions.** A prompt, schema, model, or
+  `EvidenceMatcher` constant change does **not** auto-invalidate an already-persisted
+  `JdOptimization` — only an explicit `refresh=true` recomputes it. Building real content-addressed
+  cache keys was deliberately deferred (out of scope for that change), not forgotten.
 
 ## How work gets done
 
