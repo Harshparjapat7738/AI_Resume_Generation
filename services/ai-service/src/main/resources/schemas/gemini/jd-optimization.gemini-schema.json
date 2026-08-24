@@ -1,0 +1,20 @@
+{
+  "type": "OBJECT",
+  "description": "Mirrors schemas/jd-optimization.schema.json's adjudication-only shape exactly (ADR-039/ADR-038) — matches only, no keywords/missingRequirements/emphasis/free text.",
+  "properties": {
+    "matches": {
+      "type": "ARRAY",
+      "items": {
+        "type": "OBJECT",
+        "properties": {
+          "requirementId": { "type": "STRING" },
+          "evidenceIds": { "type": "ARRAY", "items": { "type": "STRING" } },
+          "confidence": { "type": "NUMBER", "nullable": true },
+          "matchKind": { "type": "STRING", "enum": ["STRONG", "PARTIAL", "NONE"] }
+        },
+        "required": ["requirementId", "evidenceIds", "matchKind"]
+      }
+    }
+  },
+  "required": ["matches"]
+}

@@ -14,14 +14,18 @@ import org.springframework.stereotype.Service;
  * open web. It is sanitised and fenced here, described as data by the system prompt, and
  * constrained by a schema on the way out.
  *
- * <p><strong>Groq only</strong> (ADR-033): this call site
- * briefly went through {@code AiProviderRouter} (Gemini-primary, Groq-fallback); that routing
- * was removed platform-wide — every JSON/content-generation operation (JD Analysis, Evidence
- * Selection, Resume Content, Cover Letter Content, Email Content) now injects
- * {@link AiChatClient} directly, exactly as {@code EmailContentService} always has, resolving
- * unambiguously to {@link ai.careerforge.ai.client.GroqClient}. Gemini was removed entirely (ADR-033). Nothing else about this class changed: same prompt, same schema, same
- * {@link AiGenerationSupport#validateSchema} call, same {@link AiResponses.JdAnalysisResponse}/
- * {@link AiResponses.Provenance} shape, same caller ({@code JdService}), same caching and persistence.
+ * <p><strong>Provider-agnostic</strong> (ADR-033/039): this class injects {@link AiChatClient}
+ * directly and contains no branching on which provider actually serves the request — that
+ * decision lives in exactly one place, {@code AiProviderRouter}. History: an early
+ * Gemini-primary/Groq-fallback routing built across ADR-025–028/030–031 was reverted to
+ * Groq-only in ADR-032/033 specifically to guarantee zero Gemini JSON calls; ADR-039
+ * reintroduces Gemini, deliberately in the <em>opposite</em> shape (Groq-primary, Gemini
+ * fallback only on a Groq failure another provider could plausibly fix, only for this
+ * operation and JD-optimization adjudication) — a narrower, differently-motivated decision, not
+ * a reversal of ADR-032/033's reasoning. Nothing about this class's own logic changed for
+ * either transition: same prompt, same schema, same {@link AiGenerationSupport#validateSchema}
+ * call, same {@link AiResponses.JdAnalysisResponse}/{@link AiResponses.Provenance} shape, same
+ * caller ({@code JdService}), same caching and persistence.
  */
 @Service
 public class JdAnalysisService {
@@ -53,6 +57,7 @@ public class JdAnalysisService {
 
         return new AiResponses.JdAnalysisResponse(completion.content(),
                 new AiResponses.Provenance(prompt.versionLabel(), completion.result().model(),
-                        completion.result().totalTokens(), completion.repaired()));
+                        completion.result().totalTokens(), completion.repaired(),
+                        completion.result().provider().name()));
     }
 }

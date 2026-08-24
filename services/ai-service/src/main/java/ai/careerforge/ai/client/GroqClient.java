@@ -16,14 +16,12 @@ import reactor.core.publisher.Mono;
 import reactor.util.retry.Retry;
 
 /**
- * The only class in the platform that talks to Groq — the sole {@link AiChatClient}
- * implementation (see that interface's Javadoc for why the interface exists and what it
- * deliberately does not add), and therefore the provider behind every JSON/content-generation
- * operation: JD Analysis, Evidence Selection, JD Optimization and Email Content (ADR-033).
- *
- * <p>Not marked {@code @Primary} — there is nothing to disambiguate from. Gemini was removed
- * entirely by ADR-033, so this is the only {@code AiChatClient} bean; every call site injects
- * the interface unqualified and resolves here.
+ * The only class in the platform that talks to Groq — the primary provider behind every
+ * JSON/content-generation operation. Since ADR-039 this does not implement {@link AiChatClient}
+ * itself; {@link AiProviderRouter} is the sole implementation, injecting this class (and
+ * {@link GeminiClient}, the fallback) as plain concrete-typed collaborators. Business services
+ * never depend on {@code GroqClient} directly — they inject {@link AiChatClient} and resolve to
+ * the router, which decides Groq-vs-Gemini in exactly one place.
  *
  * <p><strong>Rate-limit awareness (ADR-038).</strong> Every response — success or failure — has
  * its {@code x-ratelimit-*} and {@code retry-after} headers captured and logged, never silently
@@ -44,7 +42,7 @@ import reactor.util.retry.Retry;
  * </ul>
  */
 @Component
-public class GroqClient implements AiChatClient {
+public class GroqClient {
 
     private static final Logger log = LoggerFactory.getLogger(GroqClient.class);
     private static final String CHAT_COMPLETIONS = "/chat/completions";
@@ -63,8 +61,7 @@ public class GroqClient implements AiChatClient {
         this.meterRegistry = meterRegistry;
     }
 
-    @Override
-    public AiChatResult complete(String systemPrompt, String userContent, String operation) {
+    public AiChatClient.AiChatResult complete(String systemPrompt, String userContent, String operation) {
         return complete(systemPrompt, userContent, operation, null);
     }
 
@@ -73,8 +70,7 @@ public class GroqClient implements AiChatClient {
      *                                    configured default (ADR-038); {@code null} keeps the
      *                                    configured default
      */
-    @Override
-    public AiChatResult complete(String systemPrompt, String userContent, String operation,
+    public AiChatClient.AiChatResult complete(String systemPrompt, String userContent, String operation,
                                  Integer maxCompletionTokensOverride) {
         Timer.Sample sample = Timer.start(meterRegistry);
         int maxCompletionTokens = maxCompletionTokensOverride != null
@@ -127,8 +123,8 @@ public class GroqClient implements AiChatClient {
             }
 
             recordUsage(operation, response);
-            return new AiChatResult(response.firstContent(), response.model(),
-                    response.usage() == null ? 0 : response.usage().total_tokens());
+            return new AiChatClient.AiChatResult(response.firstContent(), response.model(),
+                    response.usage() == null ? 0 : response.usage().total_tokens(), AiProvider.GROQ);
 
         } catch (GroqException ex) {
             meterRegistry.counter("careerforge.ai.failures", "operation", operation,

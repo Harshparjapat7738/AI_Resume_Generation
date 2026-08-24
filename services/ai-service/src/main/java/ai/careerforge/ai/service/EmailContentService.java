@@ -104,7 +104,7 @@ public class EmailContentService {
                 content, report, removed,
                 new AiResponses.Provenance(prompt.versionLabel(), used.model(),
                         first.totalTokens() + (regenerated ? used.totalTokens() : 0),
-                        regenerated));
+                        regenerated, used.provider().name()));
     }
 
     // ------------------------------------------------------------------ prompt ----

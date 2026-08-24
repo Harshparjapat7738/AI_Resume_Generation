@@ -72,7 +72,7 @@ public class EvidenceSelectionService {
 
         return new AiResponses.EvidenceSelectionResponse(selection,
                 new AiResponses.Provenance(prompt.versionLabel(), result.model(),
-                        result.totalTokens(), false));
+                        result.totalTokens(), false, result.provider().name()));
     }
 
     /** Removes citations the model invented, and downgrades the match when none survive. */

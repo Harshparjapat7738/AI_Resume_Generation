@@ -1,0 +1,35 @@
+{
+  "type": "OBJECT",
+  "description": "Mirrors schemas/jd-analysis.schema.json's shape exactly (ADR-039) — Gemini's responseSchema dialect is a restricted OpenAPI subset, so this is a hand-written parallel, not a converted copy, but every field name/type/enum/cap matches the canonical schema Groq's output is validated against.",
+  "properties": {
+    "isJobPosting": { "type": "BOOLEAN" },
+    "notReason": { "type": "STRING", "nullable": true },
+    "jobTitle": { "type": "STRING", "nullable": true },
+    "company": { "type": "STRING", "nullable": true },
+    "location": { "type": "STRING", "nullable": true },
+    "employmentType": { "type": "STRING", "nullable": true },
+    "seniority": { "type": "STRING", "nullable": true },
+    "yearsOfExperienceMin": { "type": "NUMBER", "nullable": true },
+    "yearsOfExperienceMax": { "type": "NUMBER", "nullable": true },
+    "requirements": {
+      "type": "ARRAY",
+      "items": {
+        "type": "OBJECT",
+        "properties": {
+          "requirementId": { "type": "STRING" },
+          "text": { "type": "STRING" },
+          "type": {
+            "type": "STRING",
+            "enum": ["HARD_REQUIRED", "PREFERRED", "RESPONSIBILITY", "SKILL",
+                     "TECHNOLOGY", "EDUCATION", "CERTIFICATION"]
+          },
+          "weight": { "type": "INTEGER" },
+          "normalisedTerms": { "type": "ARRAY", "items": { "type": "STRING" } }
+        },
+        "required": ["requirementId", "text", "type", "weight"]
+      }
+    },
+    "keywords": { "type": "ARRAY", "items": { "type": "STRING" } }
+  },
+  "required": ["isJobPosting", "requirements", "keywords"]
+}

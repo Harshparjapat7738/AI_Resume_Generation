@@ -14,6 +14,7 @@ import ai.careerforge.ai.api.dto.AiRequests.RequirementInput;
 import ai.careerforge.ai.api.dto.AiResponses;
 import ai.careerforge.ai.api.dto.EvidenceItem;
 import ai.careerforge.ai.client.AiChatClient;
+import ai.careerforge.ai.client.AiProvider;
 import ai.careerforge.ai.client.GroqException;
 import ai.careerforge.ai.prompt.PromptRegistry;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -62,7 +63,7 @@ class EvidenceSelectionServiceTest {
         String rawSelection = "{\"matches\":[{\"requirementId\":\"REQ-1\",\"evidenceIds\":[\"EXP-004\"],"
                 + "\"matchStrength\":\"STRONG\",\"reason\":\"Direct match\"}]}";
         when(aiChatClient.complete(anyString(), anyString(), anyString()))
-                .thenReturn(new AiChatClient.AiChatResult(rawSelection, "openai/gpt-oss-120b", 30));
+                .thenReturn(new AiChatClient.AiChatResult(rawSelection, "openai/gpt-oss-120b", 30, AiProvider.GROQ));
         JsonNode parsed = new ObjectMapper().readTree(rawSelection);
         when(support.validateSchema(eq(rawSelection), eq("evidence-selection.schema.json"), eq("evidence-selection")))
                 .thenReturn(parsed);
@@ -84,7 +85,7 @@ class EvidenceSelectionServiceTest {
         String rawSelection = "{\"matches\":[{\"requirementId\":\"REQ-1\","
                 + "\"evidenceIds\":[\"EXP-004\",\"EXP-999\"],\"matchStrength\":\"STRONG\",\"reason\":\"x\"}]}";
         when(aiChatClient.complete(anyString(), anyString(), anyString()))
-                .thenReturn(new AiChatClient.AiChatResult(rawSelection, "openai/gpt-oss-120b", 20));
+                .thenReturn(new AiChatClient.AiChatResult(rawSelection, "openai/gpt-oss-120b", 20, AiProvider.GROQ));
         when(support.validateSchema(eq(rawSelection), eq("evidence-selection.schema.json"), eq("evidence-selection")))
                 .thenReturn(new ObjectMapper().readTree(rawSelection));
 
@@ -103,7 +104,7 @@ class EvidenceSelectionServiceTest {
                         "desc", List.of(), List.of(), null, null)),
                 null);
         when(aiChatClient.complete(anyString(), anyString(), anyString()))
-                .thenReturn(new AiChatClient.AiChatResult("{\"matches\":[]}", "openai/gpt-oss-120b", 1));
+                .thenReturn(new AiChatClient.AiChatResult("{\"matches\":[]}", "openai/gpt-oss-120b", 1, AiProvider.GROQ));
         when(support.validateSchema(any(), any(), any()))
                 .thenReturn(new ObjectMapper().createObjectNode());
 
@@ -128,7 +129,7 @@ class EvidenceSelectionServiceTest {
     void invalidOutputStillFollowsExistingSchemaValidation() {
         AiRequests.EvidenceSelectionRequest request = requestWithOneRequirementAndOneEvidenceItem();
         when(aiChatClient.complete(anyString(), anyString(), anyString()))
-                .thenReturn(new AiChatClient.AiChatResult("not valid json", "openai/gpt-oss-120b", 1));
+                .thenReturn(new AiChatClient.AiChatResult("not valid json", "openai/gpt-oss-120b", 1, AiProvider.GROQ));
         when(support.validateSchema(eq("not valid json"), eq("evidence-selection.schema.json"), eq("evidence-selection")))
                 .thenThrow(new ai.careerforge.common.error.ApiException(
                         ai.careerforge.common.error.ErrorCode.AI_GENERATION_FAILED));

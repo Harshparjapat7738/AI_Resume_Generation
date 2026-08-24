@@ -13,11 +13,13 @@ import static org.mockito.Mockito.when;
 import ai.careerforge.ai.api.dto.AiRequests;
 import ai.careerforge.ai.api.dto.AiResponses;
 import ai.careerforge.ai.client.AiChatClient;
+import ai.careerforge.ai.client.AiProvider;
 import ai.careerforge.ai.client.GroqException;
 import ai.careerforge.ai.prompt.PromptRegistry;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
@@ -52,7 +54,7 @@ class JdAnalysisServiceTest {
                 null);
         JsonNode validated = new ObjectMapper().createObjectNode().put("jobTitle", "Backend Engineer");
         AiChatClient.AiChatResult raw =
-                new AiChatClient.AiChatResult("{\"jobTitle\":\"Backend Engineer\"}", "openai/gpt-oss-120b", 55);
+                new AiChatClient.AiChatResult("{\"jobTitle\":\"Backend Engineer\"}", "openai/gpt-oss-120b", 55, AiProvider.GROQ);
         when(support.completeAndValidate(eq(aiChatClient), eq(PROMPT.body()), anyString(),
                 eq("jd-analysis"), eq("jd-analysis.schema.json"), eq(1_200)))
                 .thenReturn(new AiGenerationSupport.ValidatedCompletion(validated, raw, false));
@@ -67,12 +69,29 @@ class JdAnalysisServiceTest {
     }
 
     @Test
+    @DisplayName("ADR-039: provenance records which provider actually served the request")
+    void provenanceRecordsWhicheverProviderServedIt() {
+        AiRequests.JdAnalysisRequest request = new AiRequests.JdAnalysisRequest(
+                "A perfectly ordinary, valid job description with enough length to pass validation.", null);
+        JsonNode validated = new ObjectMapper().createObjectNode();
+        AiChatClient.AiChatResult fromGemini =
+                new AiChatClient.AiChatResult("{}", "gemini-2.5-flash", 20, AiProvider.GEMINI);
+        when(support.completeAndValidate(any(), any(), any(), any(), any(), anyInt()))
+                .thenReturn(new AiGenerationSupport.ValidatedCompletion(validated, fromGemini, false));
+
+        AiResponses.JdAnalysisResponse response = service.analyse(request);
+
+        assertThat(response.provenance().generatedBy()).isEqualTo("GEMINI");
+        assertThat(response.provenance().model()).isEqualTo("gemini-2.5-flash");
+    }
+
+    @Test
     void reportsARepairedResponseAsRegeneratedProvenance() {
         AiRequests.JdAnalysisRequest request = new AiRequests.JdAnalysisRequest(
                 "A perfectly ordinary, valid job description with enough length to pass validation.",
                 null);
         JsonNode validated = new ObjectMapper().createObjectNode();
-        AiChatClient.AiChatResult raw = new AiChatClient.AiChatResult("{}", "openai/gpt-oss-120b", 5);
+        AiChatClient.AiChatResult raw = new AiChatClient.AiChatResult("{}", "openai/gpt-oss-120b", 5, AiProvider.GROQ);
         when(support.completeAndValidate(any(), any(), any(), any(), any(), eq(1_200)))
                 .thenReturn(new AiGenerationSupport.ValidatedCompletion(validated, raw, true));
 
@@ -88,7 +107,7 @@ class JdAnalysisServiceTest {
         when(support.completeAndValidate(any(), any(), any(), any(), any(), anyInt()))
                 .thenReturn(new AiGenerationSupport.ValidatedCompletion(
                         new ObjectMapper().createObjectNode(),
-                        new AiChatClient.AiChatResult("{}", "openai/gpt-oss-120b", 1), false));
+                        new AiChatClient.AiChatResult("{}", "openai/gpt-oss-120b", 1, AiProvider.GROQ), false));
 
         service.analyse(request);
 

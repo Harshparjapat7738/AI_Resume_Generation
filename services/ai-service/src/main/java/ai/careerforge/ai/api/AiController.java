@@ -2,6 +2,7 @@ package ai.careerforge.ai.api;
 
 import ai.careerforge.ai.api.dto.AiRequests;
 import ai.careerforge.ai.api.dto.AiResponses;
+import ai.careerforge.ai.client.AiProviderException;
 import ai.careerforge.ai.client.GroqClient;
 import ai.careerforge.ai.client.GroqException;
 import ai.careerforge.ai.config.GroqProperties;
@@ -129,17 +130,22 @@ public class AiController {
     }
 
     /**
-     * Translates Groq transport failures into the platform error envelope. A rate limit
-     * (429) is reported as such; anything else retryable becomes 502 so the caller can decide
-     * to try again; the rest is a request-shaped problem the caller must fix.
+     * Translates AI-provider transport failures into the platform error envelope. Since ADR-039
+     * this is {@link AiProviderException} — the one normalised type {@code AiProviderRouter}
+     * ever throws, regardless of whether Groq alone failed or a Gemini fallback was attempted
+     * and also failed. A rate limit is reported as such; anything else retryable becomes 502 so
+     * the caller can decide to try again; the rest is a request-shaped problem the caller must
+     * fix.
      */
     private <T> T call(java.util.function.Supplier<T> action) {
         try {
             return action.get();
-        } catch (GroqException ex) {
+        } catch (AiProviderException ex) {
             if (ex.isRateLimited()) {
                 // A quota problem, not a failed generation: 429 tells the caller (and the user)
-                // that waiting is the fix, where a 502 implied something was broken.
+                // that waiting is the fix, where a 502 implied something was broken. Reached
+                // here only when every eligible provider (Groq, then Gemini if configured and
+                // fallback-eligible) is rate-limited.
                 throw new ApiException(ErrorCode.RATE_LIMIT_EXCEEDED,
                         "The AI provider's rate limit was reached. Please wait a minute and retry.");
             }

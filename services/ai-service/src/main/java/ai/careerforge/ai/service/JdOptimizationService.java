@@ -39,7 +39,9 @@ import org.springframework.stereotype.Service;
  * requirement, referencing only the evidence ids it was given — every candidate-facing fact in
  * the final, merged result is still an {@code evidenceId} pointing back into the profile.
  *
- * <p>Groq only, like every other JSON operation (ADR-032). Single-shot: there is no prose whose
+ * <p>Provider-agnostic (ADR-032/033/039) — injects {@link AiChatClient} directly, resolving to
+ * {@code AiProviderRouter}, which falls back to Gemini on a Groq failure worth retrying
+ * elsewhere; this class itself has no branching on provider. Single-shot: there is no prose whose
  * wording could be corrected on a retry — an id the model invented is simply removed here and
  * now (see {@link #stripUnknownIds}), which is deterministic and cheaper than another model call.
  */
@@ -86,7 +88,8 @@ public class JdOptimizationService {
 
         return new AiResponses.JdOptimizationResponse(adjudication,
                 new AiResponses.Provenance(prompt.versionLabel(), completion.result().model(),
-                        completion.result().totalTokens(), completion.repaired()));
+                        completion.result().totalTokens(), completion.repaired(),
+                        completion.result().provider().name()));
     }
 
     // ------------------------------------------------------------------ prompt ----

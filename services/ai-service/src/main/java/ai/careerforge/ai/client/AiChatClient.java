@@ -5,13 +5,17 @@ package ai.careerforge.ai.client;
  * user content already fenced/sanitised by the caller, and an operation tag for metrics/logs.
  *
  * <p><strong>Why this exists:</strong> {@link GroqClient} used to be depended on directly, by
- * concrete type, from every AI generation call site (see docs/current-generation-workflow.md
- * &sect;16 for the pre-abstraction inventory). This interface changes nothing about what Groq
- * does, how it's configured, or how its failures are reported — {@link GroqClient} is, today,
- * still the only implementation, wired automatically by Spring since it is the sole
- * {@code @Component} of this type. It only gives call sites a provider-neutral type to depend
- * on, so a second implementation (a future Gemini client) can be added later without touching
- * any of them again.
+ * concrete type, from every AI generation call site. This interface changes nothing about what
+ * either provider does, how it's configured, or how its failures are reported — it only gives
+ * call sites a provider-neutral type to depend on. <strong>Since ADR-039, the sole
+ * {@code @Component} of this type is {@link AiProviderRouter}</strong>, not {@link GroqClient}
+ * directly: the router tries Groq first and falls back to {@link GeminiClient} for the handful
+ * of operations configured for it (JD analysis, JD-optimization adjudication), when Groq's
+ * failure is one Gemini could plausibly succeed at — never for every operation, never when
+ * Groq succeeds, never for a deterministic application-side bug. Every business service
+ * (`JdAnalysisService`, `JdOptimizationService`, `EvidenceSelectionService`,
+ * `EmailContentService`) still injects this interface exactly as before ADR-039 and contains no
+ * provider-specific branching whatsoever — that decision lives in exactly one place, the router.
  *
  * <p><strong>Deliberately narrow.</strong> This is exactly the shape {@link GroqClient#complete}
  * already had — system prompt in, sanitised/fenced user content in, one JSON-object completion
@@ -20,26 +24,30 @@ package ai.careerforge.ai.client;
  *   <li><strong>Structured output/schema</strong> is validated by each caller's own
  *       {@code AiGenerationSupport.validateSchema(...)} <em>after</em> this call returns, never
  *       inside it — so the interface has no schema parameter, matching today's actual call
- *       sites exactly.</li>
+ *       sites exactly. (Gemini additionally receives a provider-specific structured-output
+ *       schema hint at request time, entirely inside {@link GeminiClient} — the response is
+ *       still validated against the exact same canonical schema file Groq's output is.)</li>
  *   <li><strong>Model, temperature and timeout</strong> are per-implementation configuration
- *       (see {@link GroqProperties} / {@link GroqClientConfig} for the Groq values) — no call
- *       site varies them. <strong>The completion-token reservation is the one exception</strong>:
- *       Groq admits a call's {@code max_completion_tokens} against the account's per-minute
- *       token budget at admission time, before generation even starts (see
- *       {@code docs/ARCHITECTURE_DECISIONS.md} ADR-038), so a call whose schema genuinely needs
- *       little output should not reserve as much as one that needs a lot. {@link #complete(String,
+ *       (see {@link GroqProperties} / {@link GroqClientConfig} for the Groq values, their
+ *       Gemini counterparts for the fallback) — no call site varies them.
+ *       <strong>The completion-token reservation is the one exception</strong>: both providers
+ *       admit a call's requested output budget against a per-minute quota at admission time,
+ *       before generation even starts (ADR-038), so a call whose schema genuinely needs little
+ *       output should not reserve as much as one that needs a lot. {@link #complete(String,
  *       String, String)} keeps the old, config-default behaviour unchanged for callers that have
  *       never needed otherwise; {@link #complete(String, String, String, Integer)} lets a caller
- *       state its own, tighter ceiling.</li>
- *   <li><strong>Errors</strong> propagate as an unchecked, implementation-specific exception
- *       (Groq's is {@link GroqException}) exactly as they do today — nothing here mandates a
- *       shared exception type, since no existing call site catches one; only
- *       {@code AiController}'s own diagnostic status check imports {@link GroqException}
- *       directly, and it is intentionally left untouched by this abstraction (see that
- *       controller's Javadoc).</li>
+ *       state its own, tighter ceiling — honoured by whichever provider ends up serving the
+ *       call.</li>
+ *   <li><strong>Errors</strong> propagate as {@link AiProviderException} (ADR-039) — a single,
+ *       normalised, provider-tagged exception type, regardless of which provider(s) were tried.
+ *       Callers never catch a provider-specific exception ({@link GroqException}/
+ *       {@link GeminiException}); only {@link AiProviderRouter} itself does, to decide whether a
+ *       Groq failure is worth a Gemini attempt.</li>
  * </ul>
  *
- * @see GroqClient the sole implementation today
+ * @see AiProviderRouter the sole implementation businesses inject
+ * @see GroqClient the primary provider
+ * @see GeminiClient the fallback provider
  */
 public interface AiChatClient {
 
@@ -52,9 +60,7 @@ public interface AiChatClient {
      *                     labelled by the caller
      * @param operation    metric/log tag, e.g. {@code jd-analysis}
      * @return the model's JSON content plus provenance
-     * @throws RuntimeException an implementation-specific unchecked failure (Groq's is
-     *         {@link GroqException}) when the call fails after retries, or returns no usable
-     *         content
+     * @throws AiProviderException when every attempted provider failed
      */
     AiChatResult complete(String systemPrompt, String userContent, String operation);
 
@@ -75,10 +81,12 @@ public interface AiChatClient {
 
     /**
      * One completion's result: the model's raw JSON content, which model actually served the
-     * request, and total token usage — the exact fields every call site already persists as
-     * provenance. Field-for-field identical to {@code GroqClient}'s former (now removed)
-     * {@code GroqResult} record; only the provider-specific name was dropped.
+     * request, which provider that model belongs to, and total token usage — the exact fields
+     * every call site already persists as provenance.
+     *
+     * @param provider which provider actually served this request (ADR-039) — telemetry only;
+     *                 business services never branch on it
      */
-    record AiChatResult(String content, String model, int totalTokens) {
+    record AiChatResult(String content, String model, int totalTokens, AiProvider provider) {
     }
 }

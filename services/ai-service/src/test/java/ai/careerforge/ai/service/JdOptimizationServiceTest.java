@@ -15,6 +15,7 @@ import ai.careerforge.ai.api.dto.AiRequests.RequirementInput;
 import ai.careerforge.ai.api.dto.AiResponses;
 import ai.careerforge.ai.api.dto.EvidenceItem;
 import ai.careerforge.ai.client.AiChatClient;
+import ai.careerforge.ai.client.AiProvider;
 import ai.careerforge.ai.client.GroqException;
 import ai.careerforge.ai.prompt.PromptRegistry;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -69,7 +70,7 @@ class JdOptimizationServiceTest {
      *  {@code AiGenerationSupport}/{@code SchemaValidator}. */
     private void modelReturns(String json) throws Exception {
         JsonNode parsed = objectMapper.readTree(json);
-        AiChatClient.AiChatResult raw = new AiChatClient.AiChatResult(json, "openai/gpt-oss-120b", 42);
+        AiChatClient.AiChatResult raw = new AiChatClient.AiChatResult(json, "openai/gpt-oss-120b", 42, AiProvider.GROQ);
         when(support.completeAndValidate(eq(aiChatClient), eq(PROMPT.body()), anyString(),
                 eq("jd-optimization"), eq("jd-optimization.schema.json"), eq(1_000)))
                 .thenReturn(new AiGenerationSupport.ValidatedCompletion(parsed, raw, false));
@@ -90,6 +91,21 @@ class JdOptimizationServiceTest {
             assertThat(out.path("matches").get(0).path("matchKind").asText()).isEqualTo("STRONG");
             assertThat(response.provenance().promptVersion()).isEqualTo("jd-optimization@v2");
             assertThat(response.provenance().model()).isEqualTo("openai/gpt-oss-120b");
+        }
+
+        @Test
+        @DisplayName("ADR-039: provenance records which provider actually served the request")
+        void provenanceRecordsWhicheverProviderServedIt() throws Exception {
+            JsonNode parsed = objectMapper.readTree("""
+                    {"matches":[{"requirementId":"REQ-001","evidenceIds":["EXP-004"],"matchKind":"STRONG"}]}""");
+            AiChatClient.AiChatResult fromGemini =
+                    new AiChatClient.AiChatResult(parsed.toString(), "gemini-2.5-flash", 30, AiProvider.GEMINI);
+            when(support.completeAndValidate(any(), any(), any(), any(), any(), anyInt()))
+                    .thenReturn(new AiGenerationSupport.ValidatedCompletion(parsed, fromGemini, false));
+
+            AiResponses.JdOptimizationResponse response = service.optimise(request());
+
+            assertThat(response.provenance().generatedBy()).isEqualTo("GEMINI");
         }
 
         @Test

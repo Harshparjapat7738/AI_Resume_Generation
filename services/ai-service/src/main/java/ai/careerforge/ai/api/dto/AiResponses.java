@@ -18,9 +18,12 @@ public final class AiResponses {
      * @param model         the model that actually served the request
      * @param totalTokens   for cost attribution
      * @param regenerated   true when the first attempt failed validation and was retried
+     * @param generatedBy   which provider actually served the request — {@code GROQ} or
+     *                      {@code GEMINI} (ADR-039), telemetry/debug only; nothing downstream
+     *                      branches on it
      */
     public record Provenance(String promptVersion, String model, int totalTokens,
-                             boolean regenerated) {
+                             boolean regenerated, String generatedBy) {
     }
 
     public record JdAnalysisResponse(JsonNode analysis, Provenance provenance) {

@@ -16,6 +16,14 @@ spring:
     multipart:
       max-file-size: ${MAX_UPLOAD_SIZE:5MB}
       max-request-size: ${MAX_UPLOAD_SIZE:5MB}
+  data:
+    # Groq-cooldown tracking only (ADR-039) — no domain data lives here. Best-effort: see
+    # GroqCooldown's own comment for the degrade-gracefully-if-unreachable behaviour this
+    # local/nodocker profile relies on.
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:}
 
 eureka:
   client:
@@ -54,8 +62,10 @@ logging:
 # ---------------------------------------------------------------------------
 # Groq. The API key is supplied via GROQ_API_KEY and exists in this process only.
 # It is never logged, never returned to a client, and never reaches the frontend.
-# Groq is the sole provider for every JSON/content-generation operation (JD Analysis, Evidence
-# Selection, Resume Content, Cover Letter Content, Email Content) — ADR-032.
+# Groq is the primary provider for every JSON/content-generation operation (JD Analysis,
+# Evidence Selection, JD Optimization, Email Content). Since ADR-039, JD Analysis and JD
+# Optimization (adjudication) fall back to Gemini when Groq fails in a way another provider
+# could plausibly succeed at — see careerforge.gemini / careerforge.ai.fallback below.
 # ---------------------------------------------------------------------------
 careerforge:
   groq:
@@ -67,6 +77,25 @@ careerforge:
     # Extraction and grounded rewriting, not creative writing: keep it near-deterministic.
     temperature: ${GROQ_TEMPERATURE:0.2}
     max-retries: ${GROQ_MAX_RETRIES:2}
+  # -------------------------------------------------------------------------
+  # Gemini (ADR-039) — the fallback provider, not a second primary. Entirely optional: a
+  # deployment with no GEMINI_API_KEY (or gemini.enabled=false) never attempts a fallback at
+  # all — GeminiProperties#isUsable() is what AiProviderRouter checks, not whether this config
+  # block exists. The key is never logged, never returned to a client.
+  # -------------------------------------------------------------------------
+  gemini:
+    enabled: ${GEMINI_ENABLED:true}
+    api-key: ${GEMINI_API_KEY:}
+    base-url: ${GEMINI_BASE_URL:https://generativelanguage.googleapis.com}
+    model: ${GEMINI_MODEL:gemini-3.6-flash}
+    timeout-seconds: ${GEMINI_TIMEOUT_SECONDS:60}
+    max-output-tokens: ${GEMINI_MAX_OUTPUT_TOKENS:1200}
+  ai:
+    fallback:
+      # Only these two operations may fall back to Gemini (ADR-039) — email content and
+      # evidence selection are deliberately excluded; their Groq failures behave exactly as
+      # they always have. AiProviderRouter is the only class that reads this.
+      operations: ${AI_FALLBACK_OPERATIONS:jd-analysis,jd-optimization}
 
 
 resilience4j:
