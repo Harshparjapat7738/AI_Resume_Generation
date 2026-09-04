@@ -1,0 +1,28 @@
+# Secrets — never commit
+.env
+.env.*
+!.env.example
+*.pem
+*.p12
+*.jks
+secrets/
+
+# Java / Maven
+target/
+!.mvn/wrapper/maven-wrapper.jar
+*.class
+*.jar
+*.war
+
+# IDE
+.idea/
+*.iml
+.vscode/
+.settings/
+.classpath
+.project
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini

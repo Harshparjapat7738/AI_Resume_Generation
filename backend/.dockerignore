@@ -1,0 +1,10 @@
+# Docker build context for backend/* services is now this directory
+# (docker-compose.yml at the repo root uses `context: ./backend`).
+
+**/target
+*.md
+.env
+.env.*
+!.env.example
+.git
+.gitignore

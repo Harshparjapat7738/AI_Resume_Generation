@@ -28,7 +28,8 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
-Set-Location $root
+$backendRoot = Join-Path $root 'backend'
+Set-Location $backendRoot
 
 $allServices = @(
     'config-server', 'discovery-server', 'api-gateway',
@@ -45,7 +46,7 @@ $ports = @{
 
 # ---------------------------------------------------------------- .env ------
 if (-not (Test-Path '.env')) {
-    throw "No .env found. Run: Copy-Item .env.example .env   then fill in MONGODB_URI and JWT_SECRET."
+    throw "No .env found in backend\. Run: Copy-Item backend\.env.example backend\.env   then fill in MONGODB_URI and JWT_SECRET."
 }
 
 Write-Host "Loading .env ..." -ForegroundColor Cyan
@@ -62,7 +63,7 @@ Get-Content '.env' | ForEach-Object {
 $required = @('MONGODB_URI', 'JWT_SECRET')
 foreach ($name in $required) {
     if (-not [Environment]::GetEnvironmentVariable($name)) {
-        throw "$name is empty in .env. See README.md -> Local setup."
+        throw "$name is empty in backend\.env. See README.md -> Local setup."
     }
 }
 if ([Text.Encoding]::UTF8.GetByteCount($env:JWT_SECRET) -lt 32) {
@@ -72,7 +73,7 @@ if ([Text.Encoding]::UTF8.GetByteCount($env:JWT_SECRET) -lt 32) {
 # Point every service at localhost rather than Docker DNS names.
 $env:EUREKA_SERVER_URI = 'http://localhost:8761/eureka/'
 $env:CONFIG_IMPORT     = 'optional:configserver:http://localhost:8888'
-$env:CONFIG_REPO_LOCATION = "file:$root/infrastructure/config-repo"
+$env:CONFIG_REPO_LOCATION = "file:$backendRoot/infrastructure/config-repo"
 $env:APP_ENV           = 'local'
 
 # ---------------------------------------------------------------- build -----
@@ -84,8 +85,8 @@ if (-not $SkipBuild) {
 }
 
 # ---------------------------------------------------------------- start -----
-New-Item -ItemType Directory -Force -Path 'logs' | Out-Null
-$pidFile = 'logs\pids.txt'
+New-Item -ItemType Directory -Force -Path (Join-Path $root 'logs') | Out-Null
+$pidFile = Join-Path $root 'logs\pids.txt'
 Remove-Item $pidFile -ErrorAction SilentlyContinue
 
 function Wait-ForHealth {
@@ -104,7 +105,7 @@ function Wait-ForHealth {
         Write-Host '.' -NoNewline
     }
     Write-Host ''
-    Write-Warning "$Name did not report UP within ${TimeoutSeconds}s. Check logs\$Name.log"
+    Write-Warning "$Name did not report UP within ${TimeoutSeconds}s. Check logs\$Name.log (relative to repo root)"
     return $false
 }
 
@@ -120,9 +121,9 @@ foreach ($svc in $Services) {
     $proc = Start-Process -FilePath 'mvn.cmd' `
         -ArgumentList @('-q', '-pl', "services/$svc", 'spring-boot:run',
                         "-Dspring-boot.run.profiles=$profile") `
-        -WorkingDirectory $root `
-        -RedirectStandardOutput "logs\$svc.log" `
-        -RedirectStandardError  "logs\$svc.err.log" `
+        -WorkingDirectory $backendRoot `
+        -RedirectStandardOutput (Join-Path $root "logs\$svc.log") `
+        -RedirectStandardError  (Join-Path $root "logs\$svc.err.log") `
         -PassThru -WindowStyle Hidden
 
     "$svc=$($proc.Id)" | Add-Content $pidFile

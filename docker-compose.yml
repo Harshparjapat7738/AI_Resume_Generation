@@ -11,13 +11,18 @@
 #     docker compose up -d
 #   then export CONFIG_IMPORT=optional:configserver:http://localhost:8888 etc.
 #   See README.md → "Development modes".
+#
+# Backend config now lives in backend/.env — pass it explicitly so Compose
+# can interpolate ${VARS} used directly in this file (service env_file: lines
+# below already point at backend/.env):
+#     docker compose --env-file backend/.env --profile app up --build
 # ===========================================================================
 
 name: careerforge
 
 x-service-base: &service-base
   restart: unless-stopped
-  env_file: [.env]
+  env_file: [backend/.env]
   networks: [careerforge]
   logging:
     driver: json-file
@@ -81,7 +86,7 @@ services:
       mc anonymous set none local/$${S3_BUCKET} &&
       echo 'bucket ready (private)';
       "
-    env_file: [.env]
+    env_file: [backend/.env]
 
   prometheus:
     image: prom/prometheus:v3.3.0
@@ -91,7 +96,7 @@ services:
       - --storage.tsdb.retention.time=7d
     ports: ["9090:9090"]
     volumes:
-      - ./infrastructure/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./backend/infrastructure/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - prometheus-data:/prometheus
     networks: [careerforge]
     restart: unless-stopped
@@ -105,7 +110,7 @@ services:
       GF_USERS_ALLOW_SIGN_UP: "false"
     ports: ["3001:3000"]
     volumes:
-      - ./infrastructure/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./backend/infrastructure/grafana/provisioning:/etc/grafana/provisioning:ro
       - grafana-data:/var/lib/grafana
     depends_on: [prometheus]
     networks: [careerforge]
@@ -116,7 +121,7 @@ services:
     container_name: careerforge-otel
     command: ["--config=/etc/otel/config.yaml"]
     volumes:
-      - ./infrastructure/otel/otel-collector-config.yaml:/etc/otel/config.yaml:ro
+      - ./backend/infrastructure/otel/otel-collector-config.yaml:/etc/otel/config.yaml:ro
     ports:
       - "4317:4317"   # OTLP gRPC
       - "4318:4318"   # OTLP HTTP
@@ -129,13 +134,13 @@ services:
     profiles: [app]
     container_name: careerforge-config-server
     build:
-      context: .
+      context: ./backend
       dockerfile: services/config-server/Dockerfile
     environment:
       <<: *service-env
       CONFIG_REPO_LOCATION: file:/config-repo
     volumes:
-      - ./infrastructure/config-repo:/config-repo:ro
+      - ./backend/infrastructure/config-repo:/config-repo:ro
     ports: ["8888:8888"]
 
   discovery-server:
@@ -143,7 +148,7 @@ services:
     profiles: [app]
     container_name: careerforge-discovery
     build:
-      context: .
+      context: ./backend
       dockerfile: services/discovery-server/Dockerfile
     environment:
       <<: *service-env
@@ -155,7 +160,7 @@ services:
     profiles: [app]
     container_name: careerforge-gateway
     build:
-      context: .
+      context: ./backend
       dockerfile: services/api-gateway/Dockerfile
     environment:
       <<: *service-env
@@ -170,7 +175,7 @@ services:
     <<: *service-base
     profiles: [app]
     container_name: careerforge-auth
-    build: { context: ., dockerfile: services/auth-service/Dockerfile }
+    build: { context: ./backend, dockerfile: services/auth-service/Dockerfile }
     environment:
       <<: *service-env
     expose: ["8081"]
@@ -183,7 +188,7 @@ services:
     <<: *service-base
     profiles: [app]
     container_name: careerforge-profile
-    build: { context: ., dockerfile: services/profile-service/Dockerfile }
+    build: { context: ./backend, dockerfile: services/profile-service/Dockerfile }
     environment:
       <<: *service-env
     expose: ["8082"]
@@ -198,7 +203,7 @@ services:
     <<: *service-base
     profiles: [app]
     container_name: careerforge-jd
-    build: { context: ., dockerfile: services/jd-service/Dockerfile }
+    build: { context: ./backend, dockerfile: services/jd-service/Dockerfile }
     environment:
       <<: *service-env
     expose: ["8083"]
@@ -212,7 +217,7 @@ services:
     <<: *service-base
     profiles: [app]
     container_name: careerforge-render
-    build: { context: ., dockerfile: services/render-service/Dockerfile }
+    build: { context: ./backend, dockerfile: services/render-service/Dockerfile }
     environment:
       <<: *service-env
     expose: ["8084"]
@@ -224,7 +229,7 @@ services:
     <<: *service-base
     profiles: [app]
     container_name: careerforge-ai
-    build: { context: ., dockerfile: services/ai-service/Dockerfile }
+    build: { context: ./backend, dockerfile: services/ai-service/Dockerfile }
     environment:
       <<: *service-env
     expose: ["8085"]
@@ -237,7 +242,7 @@ services:
     <<: *service-base
     profiles: [app]
     container_name: careerforge-assessment
-    build: { context: ., dockerfile: services/assessment-service/Dockerfile }
+    build: { context: ./backend, dockerfile: services/assessment-service/Dockerfile }
     environment:
       <<: *service-env
     expose: ["8086"]
@@ -250,7 +255,7 @@ services:
     <<: *service-base
     profiles: [app]
     container_name: careerforge-application
-    build: { context: ., dockerfile: services/application-service/Dockerfile }
+    build: { context: ./backend, dockerfile: services/application-service/Dockerfile }
     environment:
       <<: *service-env
     expose: ["8088"]
