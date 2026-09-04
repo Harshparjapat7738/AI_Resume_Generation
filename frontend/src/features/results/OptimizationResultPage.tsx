@@ -8,6 +8,7 @@ import { FullScreenSpinner } from '@/components/ui/FullScreenSpinner';
 import { Select } from '@/components/ui/Select';
 import { showToast } from '@/components/ui/toast';
 import { createApplication, renderResumePdf } from '@/services/applicationApi';
+import { assessAts, assessOptimization } from '@/services/assessmentApi';
 import { DashboardShell } from '@/features/dashboard/components/DashboardShell';
 import { CopyIcon, DownloadIcon, SparkleIcon } from '@/features/dashboard/icons';
 import { getAnalysis, getJdOptimization, type OptimizationData } from '@/services/jdApi';
@@ -16,6 +17,8 @@ import { downloadTemplate, listTemplates, type TemplateResponse } from '@/servic
 import { NextSteps } from './components/NextSteps';
 import { OptimizationPromptModal } from './components/OptimizationPromptModal';
 import { ResultTopBar } from './components/ResultTopBar';
+import { ResumeGenerationFailure } from './components/ResumeGenerationFailure';
+import { ScoresCard } from './components/ScoresCard';
 
 /** Evidence ids carry their kind in the prefix, which is what lets the emphasis list be grouped
  *  into Experience / Projects / Certifications without the backend sending a second field. */
@@ -63,6 +66,7 @@ export function OptimizationResultPage() {
   // here and reused for a re-click instead of creating a fresh one every time.
   const [resumeApplicationId, setResumeApplicationId] = useState<string | null>(null);
   const [generatingResume, setGeneratingResume] = useState(false);
+  const [resumeError, setResumeError] = useState<unknown>(null);
 
   const optimizationQuery = useQuery({
     queryKey: ['jd-optimization', jdId],
@@ -110,6 +114,22 @@ export function OptimizationResultPage() {
 
   const profileQuery = useQuery({ queryKey: ['profile'], queryFn: getProfile });
 
+  // The three scores that survive a failed PDF render (ADR-040) — both computed from the JD
+  // optimization and the profile, never from a rendered document, so they're fetched
+  // unconditionally here rather than only after generateResumePdf fails below.
+  const fitQuery = useQuery({
+    queryKey: ['assessment', jdId],
+    queryFn: () => assessOptimization(jdId),
+    enabled: Boolean(jdId),
+    retry: false,
+  });
+  const atsQuery = useQuery({
+    queryKey: ['assessment-ats', jdId],
+    queryFn: () => assessAts(jdId),
+    enabled: Boolean(jdId),
+    retry: false,
+  });
+
   /**
    * Builds a RESUME_ONLY application for this JD (or reuses the one already created this
    * visit) and renders it through application-service's `POST /{id}/resume/render` (ADR-036's
@@ -122,6 +142,7 @@ export function OptimizationResultPage() {
    */
   const generateResumePdf = async () => {
     setGeneratingResume(true);
+    setResumeError(null);
     try {
       let applicationId = resumeApplicationId;
       if (!applicationId) {
@@ -138,6 +159,11 @@ export function OptimizationResultPage() {
       URL.revokeObjectURL(url);
       showToast('Resume PDF generated.');
     } catch (error) {
+      // PDF rendering is the one optional step in this flow that can fail after everything else
+      // already succeeded (ADR-040) — the scores card and the JSON/AI-prompt export above are
+      // unaffected, so the failure gets its own panel pointing back at them rather than only a
+      // toast that disappears.
+      setResumeError(error);
       showToast(describeError(error));
     } finally {
       setGeneratingResume(false);
@@ -274,6 +300,13 @@ export function OptimizationResultPage() {
               </p>
             </Card>
 
+            <ScoresCard
+              ats={atsQuery.data}
+              atsLoading={atsQuery.isLoading}
+              fit={fitQuery.data}
+              fitLoading={fitQuery.isLoading}
+            />
+
             {/* Template selection (ADR-034) ------------------------------------ */}
             <Card>
               <h2 className="text-sm font-semibold text-ink">Choose your template</h2>
@@ -335,6 +368,11 @@ export function OptimizationResultPage() {
                   Generate Resume PDF
                 </Button>
               </div>
+              {resumeError !== null && (
+                <div className="mt-4">
+                  <ResumeGenerationFailure error={resumeError} onRetry={generateResumePdf} retrying={generatingResume} />
+                </div>
+              )}
             </Card>
 
             {/* Keywords ------------------------------------------------------ */}

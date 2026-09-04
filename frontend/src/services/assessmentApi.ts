@@ -1,11 +1,16 @@
 /**
- * assessment-service — deterministic JD-fit scoring, keyed on the JD optimization (ADR-033).
+ * assessment-service — deterministic JD-fit scoring, keyed on the JD optimization (ADR-033),
+ * plus the revived ATS structural score (ADR-040).
  *
- * <p>ATS scoring was removed with resume generation: every one of its checks read a rendered
- * resume's structure (section headings, bullet lengths, formatting), and no resume is produced
- * any more. What survives is JD fit, which was always computed from the job description, the
+ * <p>ATS scoring was removed with resume generation, then revived scoped narrowly: it scores
+ * the same pre-render, cited-evidence content `ResumeRenderService` assembles for
+ * `render-service` in application-service, never a rendered document — so it exists whether or
+ * not that render call later succeeds. JD fit was always computed from the job description, the
  * candidate's profile and the requirement-to-evidence mapping — still deterministic, still
  * computed in Java, never asked of the LLM.
+ *
+ * <p>Base path is `/api/assessment` (ADR-040 — previously mismatched the backend's
+ * `/api/assessment/resume-versions`, which meant every call here 404'd).
  */
 import { apiFetch } from './apiClient';
 
@@ -42,6 +47,21 @@ export interface Assessment {
   assessedAt: string;
 }
 
+export interface AtsCheck {
+  name: string;
+  label: string;
+  passRatio: number;
+  weight: number;
+}
+
+/** ATS structural score (ADR-040) — 0-100, rounded to one decimal (ADR-008's formula). */
+export interface AtsAssessment {
+  jobDescriptionId: string;
+  atsScore: number;
+  checks: AtsCheck[];
+  assessedAt: string;
+}
+
 /**
  * Scores the JD optimization for this job description. Computes on first call; idempotent —
  * safe to call again, returns the cached result. Requires an optimization to already exist
@@ -53,4 +73,13 @@ export function assessOptimization(jobDescriptionId: string): Promise<Assessment
 
 export function getAssessment(jobDescriptionId: string): Promise<Assessment> {
   return apiFetch<Assessment>(`/api/assessment/${jobDescriptionId}`);
+}
+
+/** ATS structural score (ADR-040) — same idempotent shape as {@link assessOptimization}. */
+export function assessAts(jobDescriptionId: string): Promise<AtsAssessment> {
+  return apiFetch<AtsAssessment>(`/api/assessment/ats/${jobDescriptionId}`, { method: 'POST' });
+}
+
+export function getAtsAssessment(jobDescriptionId: string): Promise<AtsAssessment> {
+  return apiFetch<AtsAssessment>(`/api/assessment/ats/${jobDescriptionId}`);
 }

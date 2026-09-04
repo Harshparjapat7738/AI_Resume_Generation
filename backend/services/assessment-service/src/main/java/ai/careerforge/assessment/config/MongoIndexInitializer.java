@@ -29,6 +29,13 @@ public class MongoIndexInitializer implements ApplicationRunner {
         mongoTemplate.indexOps("jd_fit_assessments").ensureIndex(
                 new CompoundIndexDefinition(new Document("jdOptimizationId", 1).append("userId", 1)).unique());
 
+        // ADR-040: ATS structural scoring revived, deliberately in a new collection
+        // (`ats_structural_assessments`), not the legacy, dead `ats_assessments` above — same
+        // key shape as jd_fit_assessments, for the same reason (one current optimization per JD
+        // version).
+        mongoTemplate.indexOps("ats_structural_assessments").ensureIndex(
+                new CompoundIndexDefinition(new Document("jdOptimizationId", 1).append("userId", 1)).unique());
+
         log.info("assessment-service Mongo indexes ensured");
     }
 }

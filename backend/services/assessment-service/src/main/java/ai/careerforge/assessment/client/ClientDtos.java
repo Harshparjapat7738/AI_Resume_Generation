@@ -84,4 +84,15 @@ public final class ClientDtos {
     @JsonIgnoreProperties(ignoreUnknown = true)
     public record ProfileDto(PersonalInformationDto personalInformation, List<ExperienceDto> experiences) {
     }
+
+    /** Mirrors profile-service's unified evidence shape (the same one application-service's own
+     *  {@code EvidenceItem} mirrors) — used by {@code AtsScoringEngine} (ADR-040) to re-derive
+     *  the same cited-evidence-per-section grouping {@code ResumeRenderService.assemble()} builds
+     *  in application-service, without a second cross-service push. */
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public record EvidenceItem(
+            String evidenceId, String type, String title, String organisation, String description,
+            List<String> technologies, List<String> metrics, String startDate, String endDate,
+            List<String> bullets) {
+    }
 }

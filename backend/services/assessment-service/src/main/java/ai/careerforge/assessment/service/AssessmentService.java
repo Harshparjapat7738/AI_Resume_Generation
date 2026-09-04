@@ -1,11 +1,14 @@
 package ai.careerforge.assessment.service;
 
+import ai.careerforge.assessment.client.ClientDtos.EvidenceItem;
 import ai.careerforge.assessment.client.ClientDtos.JdAnalysisDto;
 import ai.careerforge.assessment.client.ClientDtos.ProfileDto;
 import ai.careerforge.assessment.client.ClientDtos.JdOptimizationDto;
 import ai.careerforge.assessment.client.JdServiceClient;
 import ai.careerforge.assessment.client.ProfileServiceClient;
+import ai.careerforge.assessment.domain.AtsAssessment;
 import ai.careerforge.assessment.domain.JdFitAssessment;
+import ai.careerforge.assessment.repository.AtsAssessmentRepository;
 import ai.careerforge.assessment.repository.JdFitAssessmentRepository;
 import ai.careerforge.common.error.ApiException;
 import ai.careerforge.common.error.ErrorCode;
@@ -22,6 +25,11 @@ import org.springframework.stereotype.Service;
  *
  * <p>Keyed on the optimization, not a resume version (ADR-033). Scoring is still entirely
  * deterministic Java; only its input moved.
+ *
+ * <p>Since ADR-040 this also orchestrates the revived ATS *structural* score the same way —
+ * see {@link AtsScoringEngine} — computed from the same pre-render, cited-evidence content
+ * application-service's {@code ResumeRenderService} assembles, never a rendered document, so it
+ * is available whether or not that later render call succeeds.
  */
 @Service
 public class AssessmentService {
@@ -31,24 +39,31 @@ public class AssessmentService {
     private final JdServiceClient jdServiceClient;
     private final ProfileServiceClient profileServiceClient;
     private final JdFitScoringEngine jdFitScoringEngine;
+    private final AtsScoringEngine atsScoringEngine;
     private final JdFitAssessmentRepository jdFitAssessments;
+    private final AtsAssessmentRepository atsAssessments;
 
     public AssessmentService(JdServiceClient jdServiceClient, ProfileServiceClient profileServiceClient,
-                             JdFitScoringEngine jdFitScoringEngine,
-                             JdFitAssessmentRepository jdFitAssessments) {
+                             JdFitScoringEngine jdFitScoringEngine, AtsScoringEngine atsScoringEngine,
+                             JdFitAssessmentRepository jdFitAssessments, AtsAssessmentRepository atsAssessments) {
         this.jdServiceClient = jdServiceClient;
         this.profileServiceClient = profileServiceClient;
         this.jdFitScoringEngine = jdFitScoringEngine;
+        this.atsScoringEngine = atsScoringEngine;
         this.jdFitAssessments = jdFitAssessments;
+        this.atsAssessments = atsAssessments;
     }
 
     /**
-     * ATS scoring was dropped with resume generation (ADR-033): every one of its checks read a
-     * rendered/structured resume — section headings, bullet lengths, formatting — and there is
-     * no resume to read any more. What survives is JD fit, which was always computed from the
-     * JD, the profile and the requirement/evidence mapping.
+     * JD-fit result. ATS *structural* scoring is a separate result — see {@link #assessAts} —
+     * kept apart because it has a different, narrower input (pre-render evidence content only,
+     * no JD analysis needed) and a different revival history (ADR-033 deferred it, ADR-040
+     * revives it scoped to what never depends on a render step).
      */
     public record Assessment(JdFitAssessment jdFit) {
+    }
+
+    public record AtsResult(AtsAssessment ats) {
     }
 
     /** Computes and persists on first call; returns the cached result on every call after. */
@@ -82,6 +97,32 @@ public class AssessmentService {
         return new Assessment(fit);
     }
 
+    /** Computes and persists the ATS structural score on first call; returns the cached result
+     *  on every call after (ADR-040) — same idempotent shape as {@link #assess}. */
+    public AtsResult assessAts(String userId, String jobDescriptionId) {
+        JdOptimizationDto optimization = fetchOptimization(jobDescriptionId);
+        var existingAts = atsAssessments.findByJdOptimizationIdAndUserId(optimization.id(), userId);
+        if (existingAts.isPresent()) {
+            return new AtsResult(existingAts.get());
+        }
+
+        ProfileDto profile = fetchProfile();
+        List<EvidenceItem> evidence = fetchEvidence();
+
+        AtsScoringEngine.Result atsResult = atsScoringEngine.score(optimization, profile.personalInformation(), evidence);
+        AtsAssessment ats = atsAssessments.save(new AtsAssessment(
+                optimization.id(), userId, jobDescriptionId, atsResult.atsScore(), atsResult.checks()));
+
+        return new AtsResult(ats);
+    }
+
+    public AtsResult requireExistingAts(String userId, String jobDescriptionId) {
+        JdOptimizationDto optimization = fetchOptimization(jobDescriptionId);
+        AtsAssessment ats = atsAssessments.findByJdOptimizationIdAndUserId(optimization.id(), userId)
+                .orElseThrow(() -> new ApiException(ErrorCode.RESOURCE_NOT_FOUND));
+        return new AtsResult(ats);
+    }
+
     private JdOptimizationDto fetchOptimization(String jobDescriptionId) {
         try {
             return jdServiceClient.getOptimization(jobDescriptionId);
@@ -110,6 +151,15 @@ public class AssessmentService {
             return profileServiceClient.getProfile();
         } catch (FeignException ex) {
             log.warn("profile-service call failed: {}", ex.getMessage());
+            throw new ApiException(ErrorCode.UPSTREAM_UNAVAILABLE);
+        }
+    }
+
+    private List<EvidenceItem> fetchEvidence() {
+        try {
+            return profileServiceClient.getEvidence();
+        } catch (FeignException ex) {
+            log.warn("profile-service evidence call failed: {}", ex.getMessage());
             throw new ApiException(ErrorCode.UPSTREAM_UNAVAILABLE);
         }
     }

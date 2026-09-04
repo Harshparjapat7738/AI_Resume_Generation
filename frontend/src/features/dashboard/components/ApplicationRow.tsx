@@ -9,7 +9,8 @@ import { formatDate, generationTypeLabel, statusStyle, templateLabel } from '../
 /** JD fit is scored per job description now, not per resume version (ADR-033) — this fetches
  *  and renders it inline for a row, silently showing nothing if none has been run yet rather
  *  than an error (a missing assessment on a list row isn't something to alarm the user with).
- *  ATS scoring was removed along with resume generation. */
+ *  ATS structural scoring is back (ADR-040, scoped to pre-render content only) but isn't shown
+ *  in this compact row — see the "Your scores" card on `OptimizationResultPage`. */
 function AssessmentSummary({ jobDescriptionId }: { jobDescriptionId: string }) {
   const query = useQuery({
     queryKey: ['assessment', jobDescriptionId],

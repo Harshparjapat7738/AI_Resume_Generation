@@ -46,6 +46,7 @@ implementation reality required a choice the blueprint did not make.
 | [ADR-037](#adr-037) | The JD Confirm step and the standalone Review/"Generate application" page are removed from the generation flow; Skill Gap becomes its own step, positioned between JD entry and Output Type. New flow: JD → Skill Gap → Output Type → Generate/Processing → Result. `jd-service`'s confirm gate (`JdService.confirm`, the `POST /{id}/confirm` endpoint, the `JD_NOT_CONFIRMED` check in `analyse`/`optimise`) is deleted; analysis and optimization now always read `currentVersion` directly. No new AI workflow, no change to JD analysis/skill-gap/profile/evidence/output-generation logic — the real Groq JD-optimization call simply moves to run automatically on the Skill Gap step instead of behind a separate confirm click | Accepted |
 | [ADR-038](#adr-038) | Groq rate-limit redesign for JD optimization: the old single "jd-optimization" call is replaced with an adjudication-only call (matches/confidence/matchKind, no free text) fed only requirements plus deterministically pre-filtered evidence (jd-service's new `EvidenceMatcher`); keywords, missingRequirements, emphasis, targetRole/targetCompany are now computed deterministically (`OptimizationMerge`) instead of asked of the model. Per-operation `max_completion_tokens` replaces the old blanket 4,096 (analysis 1,200, adjudication 1,000). `GroqClient` now captures rate-limit headers, distinguishes a "too large" 429 (never retried) from a temporary one (one retry honouring `retry-after`), and never retries a truncated response. Redis-backed single-flight coalesces concurrent identical requests; adding one skill from the Skill Gap screen patches the cached result deterministically (`derived`/`stale` flags) instead of re-running Groq. Cold path: ≤2 Groq calls (analysis + adjudication, or 1 if every requirement is a zero-candidate gap). Warm path: 1. Skill-gap addition: 0. The persisted/frontend-facing `optimisation` JSON shape is unchanged — no frontend contract change beyond the additive `derived`/`stale` fields | Accepted |
 | [ADR-039](#adr-039) | Gemini reintroduced as the fallback provider (never primary) for exactly two operations — JD analysis and JD-optimization adjudication — when Groq fails a fallback-eligible way (temporary rate limit, timeout, 5xx; never for a deterministic 4xx or an oversized-per-our-own-ceiling request). New `AiProviderRouter` is the sole `AiChatClient` implementation; `GroqClient`/`GeminiClient` become plain collaborators it holds, so no business service branches on provider. Same prompt/schema/validation/caching pipeline for both providers — Gemini uses structured JSON output (`responseSchema`) mirroring the canonical schema files, never a converted copy. Same ADR-038 token budgets (1,200/1,000), same deterministic evidence pre-filtering — never the full inventory to either provider. A short Redis-backed Groq cooldown (`GroqCooldown`, best-effort) avoids re-attempting a just-failed Groq call. Deliberately the *opposite* shape from the Gemini-primary/Groq-fallback routing ADR-032/033 removed for a hard "zero Gemini calls" guarantee — this is Groq-primary, Gemini only as a last resort for two operations, motivated by ADR-038's real rate-limit failures, not a reversal of that reasoning | Accepted |
+| [ADR-040](#adr-040) | ATS *structural* scoring revived, scoped to the same deterministically-assembled resume content `ResumeRenderService` builds before calling `render-service` (never a rendered PDF), computed independently of whether that render call succeeds; `AssessmentController`'s stale `/api/assessment/resume-versions` base path fixed to `/api/assessment` in the same change | Accepted |
 
 ---
 
@@ -3864,3 +3865,110 @@ succeeds.
   patch, filtered-evidence-only) needed no changes — they already assert on `aiServiceClient`
   call counts, which stay identical regardless of which provider ai-service used internally.
   Full reactor `mvn verify` and frontend `npm run typecheck`/`build` are clean.
+
+---
+
+<a id="adr-040"></a>
+# ADR-040
+
+## Decision
+
+ATS *structural* scoring — deferred by ADR-033 and left deferred again by ADR-036 — is revived,
+scoped narrowly: it scores the same deterministically-assembled resume content
+`ResumeRenderService` builds for `render-service`, never a rendered PDF, and it is computed
+independently of whether that render call succeeds. Together with the existing JD-fit
+compatibility score and readiness band, this gives the result page three real, non-fabricated
+numbers — **ATS score**, **JD-match score** (`compatibilityScore`), **selection-readiness band**
+(`readinessBand`) — that are available even when PDF generation fails, so a failed render no
+longer means the user is shown nothing but an error: they can still see how their existing
+resume/template stacks up and choose to proceed with it.
+
+- **Why this doesn't repeat ADR-033/036's reasoning for staying deferred.** Both prior records
+  deferred ATS scoring because the old engine (`AtsScoringEngine`, deleted) read a *rendered*
+  resume's structure — section headings, bullet lengths, formatting inferred from a PDF/DOCX —
+  and no resume was produced for most of that period, then ADR-036 reintroduced generation
+  without reintroducing anything that depended on the render step's *output*. This record does
+  not read `render-service`'s output either. It reads the same input `ResumeRenderService`
+  already assembles *before* calling `render-service` — cited evidence grouped into the six
+  standard sections, the candidate's contact header — so it exists and is fully computed
+  regardless of whether the subsequent render call succeeds, fails, or is never even attempted.
+  That is a different, and strictly weaker, dependency than the one both prior records correctly
+  rejected.
+- **`assessment-service` computes it independently, not application-service.** `AtsScoringEngine`
+  (new, mirrors `JdFitScoringEngine`'s shape) fetches the JD optimization
+  (`JdServiceClient.getOptimization`, already used for JD-fit) and the candidate's evidence
+  (`ProfileServiceClient`, extended with `GET /api/profile/evidence` — the same endpoint
+  `application-service` already calls for the actual render) itself, then re-derives the same
+  cited-evidence-per-section grouping `ResumeRenderService.assemble()` uses. No new call from
+  application-service to assessment-service was added — assessment-service was already
+  self-sufficient for JD-fit scoring the same way, and this follows the identical shape.
+- **Five fractional sub-checks (ADR-008's formula, reused as-is)**:
+  `ATS Score = round(100 * Σ(weightᵢ × passRatioᵢ), 1)`, sub-checks named and returned
+  individually so the UI can show what was lost, exactly as ADR-008 originally specified:
+  - `contactInformation` (0.15) — full name and email present on the profile (each half).
+  - `experienceSection` (0.30) — the cited evidence includes at least one EXPERIENCE entry;
+    weighted highest because it is the section every ATS parser and recruiter looks for first.
+  - `skillsSection` (0.15) — at least one SKILL entry is cited.
+  - `sectionBreadth` (0.15) — fraction of the six standard sections (Experience, Education,
+    Skills, Projects, Certifications, Achievements) with at least one cited entry.
+  - `bulletedContent` (0.15) — fraction of cited Experience/Project entries carrying real bullet
+    or description text, not just a bare title.
+  - `parseableDates` (0.10) — fraction of cited Experience/Education entries whose start date is
+    in the structured `YYYY-MM` shape profile-service asks for (unparseable-but-present dates,
+    e.g. free text, count as a miss without being treated as fabrication — the check is about
+    machine-parseability, not truthfulness).
+
+  If the optimization cites no evidence at all (the same condition that makes
+  `ResumeRenderService.assemble()` itself refuse to render), every section-dependent check is
+  simply zero rather than skipped — an honest low score, not an omitted one.
+- **New collection `ats_structural_assessments`, deliberately not `ats_assessments`.** The old
+  collection name stays exactly what `docs/DATABASE.md`'s existing loose-ends note already says
+  it is — dead, `resumeVersionId`-keyed, legacy — and is still not reused, to avoid exactly the
+  confusion that note already warns about for other renamed collections. Keyed on
+  `jdOptimizationId` + `userId`, the same natural key `JdFitAssessment` already uses and for the
+  same reason.
+- **New endpoints, same idempotent shape as JD-fit**: `POST /api/assessment/ats/{jobDescriptionId}`
+  (compute-or-return-cached) and `GET /api/assessment/ats/{jobDescriptionId}` (`404` if never
+  computed). No `resumeVersionId` anywhere in the new surface — job-description-keyed throughout,
+  matching how `jd_fit_assessments` already reads today.
+- **Bug fix folded in, not a separate change**: `AssessmentController`'s base mapping was still
+  `/api/assessment/resume-versions`, a leftover from before ADR-033 rekeyed the JD-fit assessment
+  to `jobDescriptionId` — the frontend's `assessmentApi.ts` was already calling the correct,
+  current shape (`/api/assessment/{jobDescriptionId}`) and has been 404ing against the real
+  controller ever since (masked because every caller of it, `ApplicationRow.tsx`'s compatibility
+  badge included, already treats a failed assessment fetch as "nothing to show yet," per
+  `docs/API_CATALOG.md`'s own "the frontend's own assessment call is non-fatal"). The mapping is
+  renamed to `/api/assessment` to match the caller that was actually live; ATS's own routes sit
+  under it at `/api/assessment/ats/**`, so the two never collide. `application-service`'s
+  `AssessmentServiceClient` (an already-unrelated, best-effort, `resumeVersionId`-keyed lookup
+  with no live caller in the current resume-render flow — see "Known loose ends" in `CLAUDE.md`)
+  was updated to the same new base path purely for textual consistency; it was already
+  non-functional in today's architecture and remains exactly as non-functional, just at a path
+  that matches the rest of this service now.
+- **Frontend**: `OptimizationResultPage.tsx` fetches both the JD-fit and ATS assessments
+  unconditionally on load (idempotent `POST`, cheap, no LLM call either side) and renders all
+  three numbers in a "Your scores" card that is always present — not only shown after a failure.
+  When `generateResumePdf` fails, the existing toast-only error handling is replaced with a panel
+  that names what failed, same as `ContentGenerationFailure` does for the earlier content stage,
+  and explicitly points back at the already-visible scores card and the template/AI-prompt
+  handoff already on this page (the export flow ADR-033 made the product's primary deliverable)
+  as what the user can still act on immediately.
+- **Explicitly not done**: no change to `JdFitScoringEngine.readinessBand()` — it still reads
+  only `compatibilityScore` and unmet-hard-requirement count, exactly as ADR-009's original
+  formula minus its `ats >=` thresholds already worked post-ADR-033; re-coupling the ATS score
+  into that formula is a separate decision, deliberately deferred rather than folded in here. No
+  reading of `render-service`'s output, ever — the whole point of this record. No revival of
+  `document-service`'s old checks (multi-column detection, embedded-font/graphic detection, DOCX
+  structural parsing) — those inherently needed a rendered artifact; today's single built-in
+  `render-service` template makes that entire category of risk structurally impossible rather
+  than something to keep checking for. No change to `EvidenceMatcher`, JD optimization, email
+  generation, or any AI-calling code — this is deterministic Java only, same as JD-fit has always
+  been.
+
+## Impact
+
+`assessment-service` gains `AtsScoringEngine`, `AtsAssessment`/`AtsCheckResult` domain classes,
+`AtsAssessmentRepository`, and the two new controller routes; `MongoIndexInitializer` adds the
+compound unique index on the new collection. `docs/API_CATALOG.md` and `docs/DATABASE.md` should
+be updated to describe the new endpoints/collection the next time either is touched — not done in
+this pass, which prioritised `CLAUDE.md` per the request that prompted this record.

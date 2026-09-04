@@ -48,10 +48,13 @@ different things:
 A missing requirement stays missing: the optimization reports it as a gap and the external
 prompt explicitly forbids claiming it. It also does **not** promise a job or display a
 fabricated hiring probability. JD-fit scoring is computed deterministically in Java from the
-optimization, the JD and the profile — never asked of the LLM (ADR-009, ADR-033). ATS scoring
-remains removed even though resume generation returned in ADR-036 — restoring it is deferred to a
-follow-up ADR (ADR-036's own Impact section); every historical check read a rendered resume's
-structure the old pipeline no longer has in this shape.
+optimization, the JD and the profile — never asked of the LLM (ADR-009, ADR-033). **ATS
+*structural* scoring is back, scoped narrowly (ADR-040):** it scores the same
+deterministically-assembled, cited-evidence resume content `ResumeRenderService` builds for
+`render-service` — never a rendered PDF/DOCX — so it is computed independently of whether that
+render call succeeds. Together with the JD-fit compatibility score and readiness band, the result
+page always shows three real, non-fabricated numbers (ATS score, JD-match score, chances of
+selection) even when PDF generation fails, so the user is never left with just an error.
 
 ## Where things live
 
@@ -72,7 +75,7 @@ forwarded as `X-User-Id` — see `FeignHeaderForwardingConfig` in each client).
 | `jd-service` | 8083 | Job description intake (paste text or SSRF-guarded URL fetch — ADR-015), requirement extraction/analysis — no confirm/review gate any more (ADR-037: `analyse`/`optimise` always read the JD's `currentVersion` directly) — **and JD optimization**, the product's primary output (ADR-033, restructured by ADR-038): deterministically pre-filters the profile's evidence (`EvidenceMatcher`) down to a handful of lexically-relevant candidates per requirement before it ever reaches `ai-service`, sends at most one adjudication call, deterministically assembles keywords/missing-requirements/emphasis (`OptimizationMerge`), and persists the result (`jd_optimizations`, one per JD version) behind a Redis-backed single-flight lock. Adding one skill from the Skill Gap screen (`POST /{id}/optimize/patch`) patches the cached result deterministically — zero Groq calls. |
 | `render-service` | 8084 | Renders an already-grounded, schema-validated document model into a PDF (ADR-036): Thymeleaf template fill → jsoup/W3CDom strict-XHTML normalisation → Open HTML to PDF (PDFBox). PDF-only — no DOCX, no mail-merge, no custom-template support. Holds no AI credential and never calls `ai-service`; owns its own MinIO/S3 bucket, distinct from `profile-service`'s "My Templates" bucket (ADR-034). |
 | `ai-service` | 8085 | The **only** process holding `GROQ_API_KEY` (ADR-012, internal-only, no gateway route). Six operations: JD analysis, evidence selection, **JD optimization**, email content, and (ADR-036) **resume content** + **cover-letter content** — the two new operations produce a versioned, schema-validated document model that `render-service` renders, never `ai-service` itself. Versioned prompts, JD fenced as untrusted data, JSON-Schema-validated output, `GroundingValidator` (the anti-fabrication gate, now applied to resume/cover-letter content exactly as it already was for email prose). Groq is the only provider — Gemini was removed entirely (ADR-033) and stays removed under ADR-036. |
-| `assessment-service` | 8086 | Deterministic JD-fit/screening-readiness scoring, keyed on the JD optimization (ADR-033). ATS scoring was removed with resume generation. Never calls an LLM. |
+| `assessment-service` | 8086 | Deterministic JD-fit/screening-readiness scoring, keyed on the JD optimization (ADR-033), plus the revived ATS *structural* score (ADR-040) — scored from the same pre-render, cited-evidence content `application-service`'s `ResumeRenderService` assembles, never a rendered document, so it exists whether or not the PDF render step later succeeds. Never calls an LLM. |
 | `application-service` | 8088 | The central `Application` aggregate, **application-email generation** (ADR-017/019), and (ADR-036) **resume/cover-letter generation orchestration** — calls `ai-service` for the document model, then `render-service` for the PDF, and persists `ResumeVersion`/`CoverLetterVersion` scoped to the `Application`. Cover-letter generation, removed by ADR-033, is back under this orchestration. |
 
 `frontend/` — React 19 + TypeScript + Vite + Tailwind 4, feature-folder structure:
@@ -88,7 +91,7 @@ forwarded as `X-User-Id` — see `FeignHeaderForwardingConfig` in each client).
 | `API_CATALOG.md` | Every endpoint, request/response shape, error code — implemented vs. planned |
 | `API_INTEGRATION.md` | Which frontend file calls which endpoint; session/auth/onboarding redirect logic |
 | `DATABASE.md` | Per-service Mongo collections, indexes, retention |
-| `ARCHITECTURE_DECISIONS.md` | 39 ADRs — every place implementation deviated from the original blueprint, and why. Many are marked "Superseded by ADR-033" (the resume/cover-letter/document decisions); read the index table's Status column before trusting an older one. ADR-038 (Groq rate-limit redesign) and ADR-039 (Gemini reintroduced as fallback for JD analysis/adjudication only) are the most recent |
+| `ARCHITECTURE_DECISIONS.md` | 40 ADRs — every place implementation deviated from the original blueprint, and why. Many are marked "Superseded by ADR-033" (the resume/cover-letter/document decisions); read the index table's Status column before trusting an older one. ADR-038 (Groq rate-limit redesign), ADR-039 (Gemini reintroduced as fallback for JD analysis/adjudication only) and ADR-040 (ATS structural scoring revived, scoped to pre-render content only) are the most recent |
 | `EXTERNAL_APIS.md` | Groq/Google OAuth/Atlas/Gmail/SMTP setup, scopes, rate limits |
 | `ai-abstraction.md` | The `AiChatClient` contract and why it stayed after Gemini was removed |
 | `IMPLEMENTATION_PLAN.md` | Milestones and what's left |
@@ -161,9 +164,25 @@ auto-invalidate an already-cached result (only an explicit `refresh=true` does).
 - **`render-service` owns its own MinIO/S3 bucket (ADR-036), separate from `profile-service`'s
   "My Templates" bucket (ADR-034).** The two are never the same bucket and never share a consumer —
   don't route render-service through profile-service's `ObjectStorageService` or vice versa.
-- **ATS structural scoring stays removed even after ADR-036 brought resume/cover-letter generation
-  back.** `ats_assessments` is still one of the six dead collections above; reviving ATS scoring is
-  explicitly deferred to its own future ADR, not implied by ADR-036.
+- **ATS structural scoring is back (ADR-040), but only in the narrow shape that never depends on
+  a rendered document.** It scores `ResumeRenderService`'s pre-render, cited-evidence content —
+  the same content sent to `render-service` — persisted in a **new** collection,
+  `ats_structural_assessments`. `ats_assessments` (old, `resumeVersionId`-keyed) is still one of
+  the dead collections above and was **not** reused — don't confuse the two. The result page
+  (`OptimizationResultPage.tsx`) fetches both this and the JD-fit assessment unconditionally on
+  load and always shows a "Your scores" card (ATS score, JD-match score, readiness band); a failed
+  `generateResumePdf` call shows `ResumeGenerationFailure` pointing back at those already-visible
+  scores and the JSON/AI-prompt export, instead of only a toast.
+- **`AssessmentController`'s base path was `/api/assessment/resume-versions`, a stale leftover
+  from before ADR-033 rekeyed everything to `jobDescriptionId` — ADR-040 renamed it to
+  `/api/assessment`.** The frontend's `assessmentApi.ts` was already calling the current shape,
+  so this had been silently 404ing on every call (masked because every caller already treats a
+  failed assessment fetch as "nothing computed yet" rather than an error) until this fix.
+  `application-service`'s `AssessmentServiceClient` (a separate, already-dead,
+  `resumeVersionId`-keyed lookup with no live caller in the current resume-render flow) was
+  renamed to the same new base path for textual consistency only — it remains non-functional;
+  fixing it for real would mean deciding what it should even look up now that resume-service is
+  gone, which is out of scope here.
 - **No frontend unit tests exist.** `npm test` finds no files: vitest is installed but there is
   no `@testing-library/react`, no DOM environment, and no config. Typecheck + build are the
   real gates.
